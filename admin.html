@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mail Control Panel — bykiva.com</title>
+<style>
+:root {
+  --bg: #0f1923;
+  --bg2: #17222d;
+  --bg3: #1c2a38;
+  --border: #2a3a4a;
+  --text: #c8d6e5;
+  --text2: #8395a7;
+  --accent: #0abde3;
+  --green: #0be881;
+  --red: #ff5e57;
+  --orange: #ffa502;
+  --blue: #54a0ff;
+  --radius: 10px;
+  --shadow: 0 2px 12px rgba(0,0,0,.3);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; }
+/* Sidebar */
+.sidebar { width: 240px; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+.sidebar .logo { padding: 24px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+.sidebar .logo .icon { width: 36px; height: 36px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; color: #fff; font-weight: bold; }
+.sidebar .logo .title { font-size: 15px; font-weight: 700; }
+.sidebar .logo .sub { font-size: 11px; color: var(--text2); }
+.sidebar nav { flex: 1; padding: 12px; }
+.sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 11px 14px; color: var(--text2); text-decoration: none; border-radius: 8px; font-size: 14px; margin-bottom: 2px; transition: all .2s; cursor: pointer; }
+.sidebar nav a:hover { background: var(--bg3); color: var(--text); }
+.sidebar nav a.active { background: var(--bg3); color: var(--accent); font-weight: 600; }
+.sidebar nav a .badge { margin-left: auto; background: var(--red); color: #fff; font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 600; }
+.sidebar .user { padding: 16px 20px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.sidebar .user .logout { color: var(--red); cursor: pointer; background: none; border: none; font-size: 12px; }
+/* Main */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.header { padding: 18px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.header h1 { font-size: 18px; font-weight: 600; }
+.header .refresh { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: .2s; }
+.header .refresh:hover { border-color: var(--accent); color: var(--accent); }
+.content { flex: 1; overflow-y: auto; padding: 24px 28px; }
+/* Tab panels */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+/* Cards */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.card .label { font-size: 11px; text-transform: uppercase; color: var(--text2); letter-spacing: .5px; margin-bottom: 6px; }
+.card .value { font-size: 26px; font-weight: 700; }
+.card .value.green { color: var(--green); }
+.card .value.accent { color: var(--accent); }
+.card .value.red { color: var(--red); }
+.card .sub { font-size: 12px; color: var(--text2); margin-top: 4px; }
+/* Service cards */
+.service-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.service-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; display: flex; align-items: center; gap: 12px; }
+.service-card .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.service-card .status-dot.online { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.service-card .status-dot.offline { background: var(--red); box-shadow: 0 0 8px var(--red); }
+.service-card .status-dot.disabled { background: var(--orange); }
+.service-card .info { flex: 1; }
+.service-card .info .name { font-size: 14px; font-weight: 600; }
+.service-card .info .port { font-size: 11px; color: var(--text2); }
+.service-card .status-text { font-size: 12px; font-weight: 600; }
+.service-card .status-text.up { color: var(--green); }
+.service-card .status-text.down { color: var(--red); }
+.service-card .status-text.off { color: var(--orange); }
+/* Users table */
+.table-wrap { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.table-tools { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.table-tools input, .table-tools select { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 6px; font-size: 13px; outline: none; }
+.table-tools input:focus { border-color: var(--accent); }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 12px 18px; font-size: 11px; text-transform: uppercase; color: var(--text2); letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+td { padding: 12px 18px; font-size: 13px; border-bottom: 1px solid var(--border); }
+tr:last-child td { border-bottom: none; }
+tr:hover { background: var(--bg3); }
+.btn { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg3); color: var(--text); cursor: pointer; font-size: 12px; transition: .2s; }
+.btn:hover { border-color: var(--accent); }
+.btn.accent { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.btn.accent:hover { opacity: .85; }
+.btn.red { color: var(--red); }
+.btn.red:hover { border-color: var(--red); background: rgba(255,94,87,.1); }
+.btn.sm { padding: 4px 10px; font-size: 11px; }
+.btn-group { display: flex; gap: 6px; }
+/* Modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 999; }
+.modal-overlay.show { display: flex; }
+.modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 28px; width: 440px; max-width: 90vw; box-shadow: var(--shadow); }
+.modal h3 { margin-bottom: 18px; font-size: 16px; }
+.modal .field { margin-bottom: 14px; }
+.modal .field label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 5px; }
+.modal .field input, .modal .field select { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 6px; font-size: 13px; outline: none; }
+.modal .field input:focus { border-color: var(--accent); }
+.modal .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+/* Login page */
+.login-overlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 9999; }
+.login-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 40px; width: 380px; box-shadow: 0 8px 40px rgba(0,0,0,.4); text-align: center; }
+.login-box h2 { margin-bottom: 6px; font-size: 22px; }
+.login-box .domain { font-size: 13px; color: var(--text2); margin-bottom: 28px; }
+.login-box .field input { text-align: center; font-size: 15px; padding: 12px; }
+.login-box .msg { font-size: 12px; color: var(--red); margin-top: 10px; min-height: 18px; }
+/* Settings */
+.setting-item { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+.setting-item .info h4 { font-size: 14px; margin-bottom: 2px; }
+.setting-item .info p { font-size: 12px; color: var(--text2); }
+.toggle { width: 44px; height: 24px; border-radius: 12px; border: 2px solid var(--border); cursor: pointer; position: relative; transition: .3s; background: var(--bg3); }
+.toggle.on { background: var(--green); border-color: var(--green); }
+.toggle::after { content: ''; width: 18px; height: 18px; border-radius: 50%; background: #fff; position: absolute; top: 1px; left: 1px; transition: .3s; }
+.toggle.on::after { left: 21px; }
+/* Log viewer */
+.log-viewer { background: #0a0f14; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; font-family: 'SF Mono', 'Menlo', monospace; font-size: 12px; line-height: 1.6; max-height: 500px; overflow-y: auto; white-space: pre-wrap; color: #a0b0c0; }
+/* Toast */
+.toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; font-size: 13px; color: #fff; z-index: 9999; opacity: 0; transition: opacity .3s; }
+.toast.show { opacity: 1; }
+.toast.success { background: #0be881; color: #000; }
+.toast.error { background: var(--red); }
+/* Spinner */
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; margin-right: 6px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- LOGIN OVERLAY -->
+<div id="loginOverlay" class="login-overlay">
+  <div class="login-box">
+    <h2>📧 Mail Control Panel</h2>
+    <div class="domain">mail.bykiva.com</div>
+    <div class="field"><input type="password" id="loginPass" placeholder="Admin password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <button class="btn accent" style="width:100%;padding:12px;font-size:14px;margin-top:6px" onclick="doLogin()">Sign In</button>
+    <div class="msg" id="loginMsg"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" style="display:none">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="logo">
+      <div class="icon">📧</div>
+      <div><div class="title">bykiva Mail</div><div class="sub">Control Panel</div></div>
+    </div>
+    <nav>
+      <a data-tab="dashboard" class="active" onclick="switchTab('dashboard')">📊 Dashboard</a>
+      <a data-tab="services" onclick="switchTab('services')">🔌 Services</a>
+      <a data-tab="users" onclick="switchTab('users')">👥 Users <span class="badge" id="userCount">-</span></a>
+      <a data-tab="logs" onclick="switchTab('logs')">📜 Logs</a>
+      <a data-tab="settings" onclick="switchTab('settings')">⚙️ Settings</a>
+    </nav>
+    <div class="user">
+      <span>admin</span>
+      <button class="logout" onclick="doLogout()">Log out</button>
+    </div>
+  </div>
+  <!-- Main -->
+  <div class="main">
+    <div class="header">
+      <h1 id="pageTitle">Dashboard</h1>
+      <button class="refresh" onclick="refreshCurrentTab()">🔄 Refresh</button>
+    </div>
+    <div class="content">
+      <!-- DASHBOARD -->
+      <div class="tab-panel active" id="tab-dashboard">
+        <div class="card-grid" id="dashCards"></div>
+        <div class="card-grid" id="dashMemory"></div>
+        <div class="service-grid" id="dashServices"></div>
+      </div>
+      <!-- SERVICES -->
+      <div class="tab-panel" id="tab-services">
+        <div class="service-grid" id="svcGrid"></div>
+      </div>
+      <!-- USERS -->
+      <div class="tab-panel" id="tab-users">
+        <div class="table-wrap">
+          <div class="table-tools">
+            <input type="text" id="userSearch" placeholder="🔍 Search users..." oninput="renderUserTable()">
+            <button class="btn accent" onclick="showUserModal()">+ Create User</button>
+            <button class="btn" onclick="showBatchModal()">📋 Batch Import</button>
+            <span style="margin-left:auto;font-size:12px;color:var(--text2)"><span id="tableTotal">0</span> users</span>
+          </div>
+          <div style="overflow-x:auto">
+            <table>
+              <thead><tr><th>ID</th><th>Email</th><th>Quota</th><th>Active</th><th>Created</th><th>Actions</th></tr></thead>
+              <tbody id="userTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <!-- LOGS -->
+      <div class="tab-panel" id="tab-logs">
+        <div class="table-tools" style="margin-bottom:12px;border-radius:var(--radius)">
+          <select id="logLines" onchange="loadLogs()">
+            <option value="50">50 lines</option>
+            <option value="100" selected>100 lines</option>
+            <option value="200">200 lines</option>
+            <option value="500">500 lines</option>
+          </select>
+          <button class="btn" onclick="loadLogs()">🔄 Refresh</button>
+          <span style="font-size:12px;color:var(--text2);margin-left:10px">server_live.log</span>
+        </div>
+        <div class="log-viewer" id="logContent">Loading...</div>
+      </div>
+      <!-- SETTINGS -->
+      <div class="tab-panel" id="tab-settings">
+                <div class="setting-item">
+                    <div class="info">
+                        <h4>Catch-All Inbox</h4>
+                        <p id="catchAllDescription">You can toggle it anytime. When off, senders of emails to non-existent users will get proper bounce notifications — just like Google does.</p>
+                        <p style="font-size:11px;color:#888;margin-top:4px;">Toggle writes to config.json and takes effect immediately — no restart required.</p>
+                    </div>
+                    <div class="toggle" id="catchAllToggle" onclick="toggleCatchAll()"></div>
+                </div>
+        <div class="setting-item">
+          <div class="info"><h4>Alibaba Cloud Sender Auto-Creation</h4><p id="aliStatus">When enabled, new users are automatically added as Alibaba DirectMail senders</p></div>
+          <button class="btn" onclick="showAliModal()">Configure</button>
+        </div>
+        <div class="setting-item">
+          <div class="info"><h4>Admin Password</h4><p>Change the admin panel password</p></div>
+          <button class="btn" onclick="showAdminPassModal()">Change</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CREATE/EDIT USER MODAL -->
+<div class="modal-overlay" id="userModal">
+  <div class="modal">
+    <h3 id="userModalTitle">Create User</h3>
+    <input type="hidden" id="userModalId">
+    <div class="field"><label>Email</label><input type="email" id="ufEmail" placeholder="user@bykiva.com"></div>
+    <div class="field"><label id="ufPassLabel">Password</label><input type="password" id="ufPassword" placeholder="Password"></div>
+    <div class="field"><label>Quota (GB)</label><input type="number" id="ufQuota" value="1" min="0.1" step="0.5" placeholder="Quota in GB"></div>
+    <div class="field"><label>Active</label><select id="ufActive"><option value="true">Active</option><option value="false">Disabled</option></select></div>
+    <div class="actions">
+      <button class="btn" onclick="closeUserModal()">Cancel</button>
+      <button class="btn accent" id="userModalSaveBtn" onclick="saveUser()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- RESET PASSWORD MODAL -->
+<div class="modal-overlay" id="resetPassModal">
+  <div class="modal">
+    <h3>Reset Password</h3>
+    <input type="hidden" id="resetPassId">
+    <p style="font-size:13px;color:var(--text2);margin-bottom:14px" id="resetPassEmail"></p>
+    <div class="field"><label>New Password</label><input type="password" id="resetPassNew" placeholder="New password"></div>
+    <div class="actions">
+      <button class="btn" onclick="closeResetPass()">Cancel</button>
+      <button class="btn accent" onclick="doResetPassword()">Reset</button>
+    </div>
+  </div>
+</div>
+
+<!-- CHANGE ADMIN PASSWORD -->
+<div class="modal-overlay" id="adminPassModal">
+  <div class="modal">
+    <h3>Change Admin Password</h3>
+    <div class="field"><label>New Password</label><input type="password" id="adminPassNew" placeholder="New admin password"></div>
+    <div class="actions">
+      <button class="btn" onclick="closeAdminPass()">Cancel</button>
+      <button class="btn accent" onclick="changeAdminPassword()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- BATCH IMPORT MODAL -->
+<div class="modal-overlay" id="batchModal">
+  <div class="modal" style="width:520px">
+    <h3>Batch Import Users</h3>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:12px">Paste JSON array: [{"email":"...","password":"...","quota_gb":2}]</p>
+    <div class="field"><textarea id="batchJson" style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:6px;font-size:12px;font-family:monospace;resize:vertical;height:180px;outline:none" placeholder='[{"email":"user1@bykiva.com","password":"pass1","quota_gb":2}]'></textarea></div>
+    <div class="actions">
+      <button class="btn" onclick="closeBatch()">Cancel</button>
+      <button class="btn accent" onclick="doBatchImport()">Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- ALIBABA CLOUD CONFIG MODAL -->
+<div class="modal-overlay" id="aliModal">
+  <div class="modal" style="width:500px">
+    <h3>Alibaba Cloud DirectMail</h3>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:14px">Enter your Alibaba Cloud AccessKey credentials to auto-create sender addresses when users are created.</p>
+    <div class="field"><label>Region</label><select id="aliRegion"><option value="ap-southeast-1">ap-southeast-1 (Singapore)</option><option value="cn-hangzhou">cn-hangzhou</option><option value="cn-shanghai">cn-shanghai</option></select></div>
+    <div class="field"><label>AccessKey ID</label><input type="text" id="aliKeyId" placeholder="LTAI..."></div>
+    <div class="field"><label>AccessKey Secret</label><input type="password" id="aliKeySecret" placeholder="Leave blank to keep current"></div>
+    <div class="actions">
+      <button class="btn" onclick="closeAliModal()">Cancel</button>
+      <button class="btn accent" onclick="saveAliSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ====================== STATE ======================
+const API = '';
+let token = sessionStorage.getItem('bykiva_token') || '';
+let users = [];
+let currentTab = 'dashboard';
+
+// ====================== API ======================
+async function api(method, path, body) {
+  const headers = {};
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  if (body) headers['Content-Type'] = 'application/json';
+  const opts = { method, headers };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  return r.status === 204 ? {} : r.json();
+}
+
+// ====================== LOGIN ======================
+async function doLogin() {
+  const pass = document.getElementById('loginPass').value;
+  if (!pass) { document.getElementById('loginMsg').textContent = 'Enter password'; return; }
+  try {
+    const r = await fetch(API + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pass }) });
+    const data = await r.json();
+    if (r.ok) {
+      token = data.token;
+      sessionStorage.setItem('bykiva_token', token);
+      document.getElementById('loginOverlay').style.display = 'none';
+      document.getElementById('app').style.display = 'flex';
+      initApp();
+    } else {
+      document.getElementById('loginMsg').textContent = data.error || 'Login failed';
+    }
+  } catch(e) { document.getElementById('loginMsg').textContent = 'Connection error'; }
+}
+
+async function checkSession() {
+  if (!token) return false;
+  try {
+    const r = await fetch(API + '/api/session', { headers: { 'Authorization': 'Bearer ' + token } });
+    const data = await r.json();
+    return data.authenticated === true;
+  } catch(e) { return false; }
+}
+
+async function doLogout() {
+  await api('POST', '/api/logout');
+  token = '';
+  sessionStorage.removeItem('bykiva_token');
+  location.reload();
+}
+
+// ====================== INIT ======================
+async function initApp() {
+  document.getElementById('app').style.display = 'flex';
+  await Promise.all([loadDashboard(), loadUsers()]);
+  setInterval(() => { if (currentTab === 'dashboard') loadDashboard(); if (currentTab === 'services') loadServices(); }, 15000);
+}
+
+(async function() {
+  if (token && await checkSession()) {
+    document.getElementById('loginOverlay').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    initApp();
+  } else {
+    document.getElementById('loginOverlay').style.display = 'flex';
+    token = '';
+    sessionStorage.removeItem('bykiva_token');
+  }
+})();
+
+// ====================== TABS ======================
+async function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-panel').forEach(e => e.classList.remove('active'));
+  document.querySelectorAll('.sidebar nav a').forEach(e => e.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelector('[data-tab="' + tab + '"]').classList.add('active');
+  const titles = { dashboard: 'Dashboard', services: 'Services', users: 'Users', logs: 'Logs', settings: 'Settings' };
+  document.getElementById('pageTitle').textContent = titles[tab] || tab;
+  if (tab === 'dashboard') await loadDashboard();
+  if (tab === 'services') await loadServices();
+  if (tab === 'users') await loadUsers();
+  if (tab === 'logs') await loadLogs();
+  if (tab === 'settings') await loadSettings();
+}
+
+function refreshCurrentTab() {
+  switchTab(currentTab);
+}
+
+// ====================== DASHBOARD ======================
+async function loadDashboard() {
+  try {
+    const [sys, usersData, svcs] = await Promise.all([
+      api('GET', '/api/system'),
+      api('GET', '/api/users'),
+      api('GET', '/api/services')
+    ]);
+
+    let activeCount = 0, totalQuota = 0;
+    if (usersData.users) {
+      usersData.users.forEach(u => { if (u.active) activeCount++; totalQuota += (u.quota_bytes || 0); });
+    }
+    const totalUsers = usersData.users ? usersData.users.length : 0;
+    document.getElementById('userCount').textContent = totalUsers;
+
+    const cardsHtml = `
+      <div class="card"><div class="label">Total Users</div><div class="value accent">${totalUsers}</div><div class="sub">${activeCount} active</div></div>
+      <div class="card"><div class="label">Services Online</div><div class="value green">${svcs.services ? svcs.services.filter(s => s.status === 'online').length : 0} / ${svcs.services ? svcs.services.length : 0}</div><div class="sub">Running</div></div>
+      <div class="card"><div class="label">Memory (RSS)</div><div class="value accent">${sys.memory_rss_mb || '--'} MB</div><div class="sub">Virtual: ${sys.memory_size_mb || '--'} MB</div></div>
+      <div class="card"><div class="label">Uptime</div><div class="value accent">${sys.uptime_display || '--'}</div><div class="sub">Host: ${sys.hostname}</div></div>
+    `;
+    document.getElementById('dashCards').innerHTML = cardsHtml;
+
+    // Service summary
+    if (svcs.services) {
+      document.getElementById('dashServices').innerHTML = svcs.services.map(s => `
+        <div class="service-card">
+          <div class="status-dot ${s.status === 'online' ? 'online' : s.status === 'disabled' ? 'disabled' : 'offline'}"></div>
+          <div class="info"><div class="name">${s.name}</div><div class="port">Port ${s.port}</div></div>
+          <div class="status-text ${s.status === 'online' ? 'up' : s.status === 'disabled' ? 'off' : 'down'}">${s.status}</div>
+        </div>
+      `).join('');
+    }
+
+    document.getElementById('dashMemory').innerHTML = '';
+  } catch(e) { console.error('Dashboard error:', e); }
+}
+
+// ====================== SERVICES ======================
+async function loadServices() {
+  const data = await api('GET', '/api/services');
+  if (!data.services) return;
+  document.getElementById('svcGrid').innerHTML = data.services.map(s => `
+    <div class="service-card">
+      <div class="status-dot ${s.status === 'online' ? 'online' : s.status === 'disabled' ? 'disabled' : 'offline'}"></div>
+      <div class="info"><div class="name">${s.name}</div><div class="port">Port ${s.port}</div></div>
+      <div class="status-text ${s.status === 'online' ? 'up' : s.status === 'disabled' ? 'off' : 'down'}">${s.status}</div>
+    </div>
+  `).join('');
+}
+
+// ====================== USERS ======================
+async function loadUsers() {
+  const data = await api('GET', '/api/users');
+  if (!data.users) return;
+  users = data.users;
+  document.getElementById('userCount').textContent = data.total;
+  document.getElementById('tableTotal').textContent = data.total;
+  renderUserTable();
+}
+
+function renderUserTable() {
+  const q = (document.getElementById('userSearch').value || '').toLowerCase();
+  const filtered = users.filter(u => u.email.toLowerCase().includes(q));
+  document.getElementById('userTbody').innerHTML = filtered.map(u => `
+    <tr>
+      <td>${u.id}</td>
+      <td>${u.email}</td>
+      <td>${u.quota_gb || '1.0'} GB</td>
+      <td><span style="color:${u.active ? 'var(--green)' : 'var(--red)'}">${u.active ? 'Active' : 'Disabled'}</span></td>
+      <td>${(u.created_at || '').split('T')[0]}</td>
+      <td>
+        <div class="btn-group">
+          <button class="btn sm" onclick="editUser(${u.id})" title="Edit">✏️</button>
+          <button class="btn sm" onclick="showResetPass(${u.id},'${u.email}')" title="Reset Password">🔑</button>
+          <button class="btn sm red" onclick="deleteUser(${u.id},'${u.email}')" title="Delete">🗑</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function showUserModal(id) {
+  const modal = document.getElementById('userModal');
+  modal.classList.add('show');
+  document.getElementById('userModalId').value = id || '';
+  if (id) {
+    const u = users.find(x => x.id === id);
+    document.getElementById('userModalTitle').textContent = 'Edit User';
+    document.getElementById('ufEmail').value = u.email;
+    document.getElementById('ufPassword').value = '';
+    document.getElementById('ufPassLabel').textContent = 'New Password (leave blank to keep)';
+    document.getElementById('ufQuota').value = parseFloat(u.quota_gb || '1');
+    document.getElementById('ufActive').value = u.active ? 'true' : 'false';
+    document.getElementById('userModalSaveBtn').textContent = 'Save';
+  } else {
+    document.getElementById('userModalTitle').textContent = 'Create User';
+    document.getElementById('ufEmail').value = '';
+    document.getElementById('ufPassword').value = '';
+    document.getElementById('ufPassLabel').textContent = 'Password';
+    document.getElementById('ufQuota').value = '1';
+    document.getElementById('ufActive').value = 'true';
+    document.getElementById('userModalSaveBtn').textContent = 'Create';
+  }
+}
+
+function closeUserModal() { document.getElementById('userModal').classList.remove('show'); }
+
+async function saveUser() {
+  const id = document.getElementById('userModalId').value;
+  const email = document.getElementById('ufEmail').value.trim();
+  const password = document.getElementById('ufPassword').value;
+  const quota_gb = parseFloat(document.getElementById('ufQuota').value) || 1;
+  const active = document.getElementById('ufActive').value === 'true';
+
+  const payload = { email, quota_gb, active };
+  if (!id || password) payload.password = password;
+
+  let result;
+  if (id) {
+    result = await api('PUT', '/api/users/' + id, payload);
+  } else {
+    if (!password) { toast('Password is required', 'error'); return; }
+    result = await api('POST', '/api/users', payload);
+  }
+
+  if (result.error) { toast(result.error, 'error'); return; }
+  toast(id ? 'User updated' : 'User created', 'success');
+  closeUserModal();
+  loadUsers();
+}
+
+async function editUser(id) { showUserModal(id); }
+
+async function deleteUser(id, email) {
+  if (!confirm('Delete user "' + email + '"?')) return;
+  await api('DELETE', '/api/users/' + id);
+  toast('User deleted', 'success');
+  loadUsers();
+}
+
+function showResetPass(id, email) {
+  document.getElementById('resetPassId').value = id;
+  document.getElementById('resetPassEmail').textContent = 'Reset password for: ' + email;
+  document.getElementById('resetPassNew').value = '';
+  document.getElementById('resetPassModal').classList.add('show');
+}
+
+function closeResetPass() { document.getElementById('resetPassModal').classList.remove('show'); }
+
+async function doResetPassword() {
+  const id = document.getElementById('resetPassId').value;
+  const pw = document.getElementById('resetPassNew').value;
+  if (!pw) { toast('Enter new password', 'error'); return; }
+  const r = await api('POST', '/api/users/' + id + '/reset-password', { password: pw });
+  if (r.error) { toast(r.error, 'error'); return; }
+  toast('Password reset', 'success');
+  closeResetPass();
+}
+
+// ====================== BATCH IMPORT ======================
+function showBatchModal() { document.getElementById('batchModal').classList.add('show'); }
+function closeBatch() { document.getElementById('batchModal').classList.remove('show'); }
+
+// --- ALIBABA CLOUD SETTINGS ---
+async function loadAliSettings() {
+  try {
+    const res = await api('/api/alibaba/settings');
+    const d = await res.json();
+    if (d.configured) {
+      document.getElementById('aliStatus').innerHTML = '<span style="color:#2ecc71">&#9679;</span> <strong>Active</strong> — New users auto-added to Alibaba DirectMail (Region: '+d.region+', Key: '+d.access_key_id+')';
+      document.getElementById('aliRegion').value = d.region;
+    } else {
+      document.getElementById('aliStatus').innerHTML = '<span style="color:#f39c12">&#9679;</span> <strong>Not configured</strong> — Enter AccessKey to auto-add senders';
+    }
+  } catch(e) { console.error('loadAliSettings:', e); }
+}
+
+function showAliModal() {
+  document.getElementById('aliKeyId').value = '';
+  document.getElementById('aliKeySecret').value = '';
+  document.getElementById('aliModal').classList.add('show');
+}
+
+function closeAliModal() {
+  document.getElementById('aliModal').classList.remove('show');
+}
+
+async function saveAliSettings() {
+  const region = document.getElementById('aliRegion').value;
+  const keyId = document.getElementById('aliKeyId').value.trim();
+  const keySecret = document.getElementById('aliKeySecret').value.trim();
+
+  if (!keyId && !keySecret) {
+    alert('Enter at least one field to update');
+    return;
+  }
+
+  const res = await api('/api/alibaba/settings', 'POST', { region, access_key_id: keyId, access_key_secret: keySecret });
+  const d = await res.json();
+  if (d.status === 'updated') {
+    closeAliModal();
+    loadAliSettings();
+    showToast(d.configured ? 'Alibaba Cloud configured' : 'Settings saved');
+  }
+}
+
+loadAliSettings();
+
+async function doBatchImport() {
+  let json;
+  try { json = JSON.parse(document.getElementById('batchJson').value); } catch(e) { toast('Invalid JSON', 'error'); return; }
+  if (!Array.isArray(json)) { toast('Must be a JSON array', 'error'); return; }
+  const r = await api('POST', '/api/users/batch', json);
+  if (r.error) { toast(r.error, 'error'); return; }
+  toast(`Created ${r.created} / ${r.total} users`, 'success');
+  closeBatch();
+  loadUsers();
+}
+
+// ====================== LOGS ======================
+async function loadLogs() {
+  const lines = document.getElementById('logLines').value;
+  const data = await api('GET', '/api/logs?lines=' + lines);
+  document.getElementById('logContent').textContent = data.content || 'No logs';
+}
+
+// ====================== SETTINGS ======================
+async function loadSettings() {
+  const data = await api('GET', '/api/catch-all');
+  const toggle = document.getElementById('catchAllToggle');
+  if (data.enabled) toggle.classList.add('on'); else toggle.classList.remove('on');
+  document.getElementById('catchAllDescription').innerHTML = data.enabled
+    ? 'All emails to @bykiva.com are accepted — even for non-existent users.'
+    : 'Only registered users receive email. Non-existent addresses get proper bounce notifications — just like Google does.';
+}
+
+async function toggleCatchAll() {
+  const toggle = document.getElementById('catchAllToggle');
+  const enable = !toggle.classList.contains('on');
+  const r = await api('POST', '/api/catch-all', { enabled: enable });
+  if (!r.error) {
+    if (enable) toggle.classList.add('on'); else toggle.classList.remove('on');
+    document.getElementById('catchAllDescription').innerHTML = enable
+      ? 'All emails to @bykiva.com are accepted — even for non-existent users.'
+      : 'Only registered users receive email. Non-existent addresses get proper bounce notifications — just like Google does.';
+    toast('Catch-all ' + (enable ? 'enabled' : 'disabled') + '. Changes applied immediately.', 'success');
+  } else {
+    toast(r.error, 'error');
+  }
+}
+
+function showAdminPassModal() { document.getElementById('adminPassModal').classList.add('show'); }
+function closeAdminPass() { document.getElementById('adminPassModal').classList.remove('show'); }
+
+async function changeAdminPassword() {
+  const pw = document.getElementById('adminPassNew').value;
+  if (!pw) { toast('Enter new password', 'error'); return; }
+  if (pw.length < 4) { toast('Password too short (min 4 chars)', 'error'); return; }
+  const r = await api('POST', '/api/admin/password', { new_password: pw });
+  if (r.error) { toast(r.error, 'error'); return; }
+  toast('Admin password changed', 'success');
+  sessionStorage.setItem('bykiva_token', token); // keep session
+  closeAdminPass();
+}
+
+// ====================== TOAST ======================
+function toast(msg, type) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast ' + type + ' show';
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+</script>
+</body>
+</html>

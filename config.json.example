@@ -1,0 +1,78 @@
+{
+    "hostname": "yourdomain.com",
+    "interfaces": ["0.0.0.0"],
+    "local_domains": ["yourdomain.com"],
+    "catch_all_enabled": true,
+    "maildir_base_path": "./maildir",
+    "quota_max_bytes": 1073741824,
+    "quota_soft_percent": 80,
+    "ports": {
+        "smtp": 25,
+        "submission": 587,
+        "smtps": 465,
+        "imap": 143,
+        "imaps": 993,
+        "pop3": 110,
+        "pop3s": 995,
+        "api": 9090
+    },
+    "dev_ports": {
+        "smtp": 2525,
+        "submission": 5877,
+        "smtps": 4655,
+        "imap": 1143,
+        "imaps": 9933,
+        "pop3": 1103,
+        "pop3s": 9955,
+        "api": 9090
+    },
+    "tls": {
+        "cert_file": "/path/to/fullchain.pem",
+        "key_file": "/path/to/privkey.pem"
+    },
+    "database": {
+        "driver": "QPSQL",
+        "host": "127.0.0.1",
+        "port": 5432,
+        "name": "mailserver",
+        "user": "mailserver",
+        "password": "CHANGE_ME"
+    },
+    "outbound": {
+        "relay": {
+            "host": "smtp.dm.aliyuncs.com",
+            "port": 465,
+            "use_tls": true,
+            "username": "ALIBABA_ACCESS_KEY_ID",
+            "password": "ALIBABA_ACCESS_KEY_SECRET",
+            "from_address": "noreply@yourdomain.com"
+        },
+        "max_retries": 5,
+        "retry_delay_seconds": 300,
+        "spool_dir": "./spool"
+    },
+    "alibaba_cloud": {
+        "access_key_id": "YOUR_ALIBABA_ACCESS_KEY_ID",
+        "access_key_secret": "YOUR_ALIBABA_ACCESS_KEY_SECRET",
+        "region": "ap-southeast-1"
+    },
+    "api": {
+        "token_hash": "PLACEHOLDER_SHA256_HASH",
+        "rate_limit_rpm": 30
+    },
+    "rate_limits": {
+        "connections_per_ip_per_minute": 30,
+        "auth_attempts_per_ip_per_minute": 10,
+        "max_recipients_per_message": 50
+    },
+    "rspamd": {
+        "host": "127.0.0.1",
+        "port": 11333
+    },
+    "dkim": {
+        "enabled": false,
+        "domain": "yourdomain.com",
+        "selector": "mail",
+        "private_key_path": "./certs/dkim/mail.private"
+    }
+}
