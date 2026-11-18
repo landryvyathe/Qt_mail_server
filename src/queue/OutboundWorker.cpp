@@ -429,13 +429,13 @@ OutboundWorker::SmtpDeliveryResult OutboundWorker::deliverViaRelay(OutboundEmail
             if (authMethod == "PLAIN") {
                 if (!smtpAuthPlain(&socket, authUser, authPass, code, text)) {
                     result.errorText = QStringLiteral("AUTH PLAIN failed: ") + text;
-                    result.temporary = false;
+                    result.temporary = true; // a freshly set DirectMail password takes ~1 min to propagate
                     return result;
                 }
             } else if (authMethod == "LOGIN") {
                 if (!smtpAuthLogin(&socket, authUser, authPass, code, text)) {
                     result.errorText = QStringLiteral("AUTH LOGIN failed: ") + text;
-                    result.temporary = false;
+                    result.temporary = true; // a freshly set DirectMail password takes ~1 min to propagate
                     return result;
                 }
             } else {
@@ -625,6 +625,10 @@ void OutboundWorker::loadPendingFromDisk() {
         }
         if (already) continue;
 
+        const auto retry = m_retryState.constFind(QFileInfo(fp).fileName());
+        if (retry != m_retryState.constEnd() && retry->nextAttemptAt > QDateTime::currentSecsSinceEpoch())
+            continue;
+
         QFile file(fp);
         if (!file.open(QIODevice::ReadOnly)) continue;
 
@@ -644,6 +648,7 @@ void OutboundWorker::loadPendingFromDisk() {
 
         OutboundEmail email;
         email.filePath = fp;
+        if (retry != m_retryState.constEnd()) email.retryCount = retry->retryCount;
 
         if (hasJsonEnvelope && jsonEnd > 0) {
             QByteArray jsonBytes = data.left(jsonEnd);
@@ -707,6 +712,7 @@ void OutboundWorker::markDelivered(const OutboundEmail& email) {
     QDir().mkpath(deliveredDir);
     QString dest = deliveredDir + "/" + QFileInfo(email.filePath).fileName();
     QFile::rename(email.filePath, dest);
+    m_retryState.remove(QFileInfo(email.filePath).fileName());
     qInfo() << "OutboundWorker: delivered ->" << dest;
 }
 
@@ -721,6 +727,7 @@ void OutboundWorker::markDeferred(OutboundEmail& email, const QString& reason) {
     QString dest = deferredDir + "/" + QFileInfo(email.filePath).fileName();
     QFile::rename(email.filePath, dest);
     email.filePath = dest;
+    m_retryState.insert(QFileInfo(dest).fileName(), {email.retryCount, email.nextAttemptAt});
 
     qWarning() << "OutboundWorker: deferred" << email.filePath
                << "(" << reason << ") – next attempt in" << delay << "s";
@@ -731,5 +738,6 @@ void OutboundWorker::markFailed(const OutboundEmail& email) {
     QDir().mkpath(failedDir);
     QString dest = failedDir + "/" + QFileInfo(email.filePath).fileName();
     QFile::rename(email.filePath, dest);
+    m_retryState.remove(QFileInfo(email.filePath).fileName());
     qCritical() << "OutboundWorker: permanently failed ->" << dest;
 }

@@ -71,6 +71,11 @@ private:
 
     QTimer*              m_timer;
     QQueue<OutboundEmail> m_queue;
+
+    // Deferred messages leave m_queue and are re-read from spool/deferred on every poll; this
+    // keeps their attempt count and backoff across those reloads (keyed by spool file name).
+    struct RetryState { int retryCount = 0; qint64 nextAttemptAt = 0; };
+    QHash<QString, RetryState> m_retryState;
     bool m_stopping;
     int  m_maxRetries;
 };

@@ -106,8 +106,8 @@ static qint64 uptimeSeconds()
 // ---------------------------------------------------------------------------
 // Constructor
 // ---------------------------------------------------------------------------
-ApiServer::ApiServer(const ConfigManager& config, QObject* parent)
-    : QObject(parent), m_config(config) {
+ApiServer::ApiServer(const ConfigManager& config, const QString& configFilePath, QObject* parent)
+    : QObject(parent), m_config(config), m_configFilePath(configFilePath) {
 
     m_port = config.port("api");
     if (m_port <= 0) m_port = 8080;
@@ -278,34 +278,32 @@ bool ApiServer::start() {
         // Resolve path to the Python script
         QString aliScriptPath;
         QStringList scriptSearchPaths = {
-            QDir::currentPath() + "/scripts/alibaba_add_sender.py",
-            QDir::currentPath() + "/../scripts/alibaba_add_sender.py",
+            QDir::currentPath() + "/scripts/alibaba_provision_sender.py",
+            QDir::currentPath() + "/../scripts/alibaba_provision_sender.py",
         };
         for (const auto& p : scriptSearchPaths) {
             if (QFile::exists(p)) { aliScriptPath = p; break; }
         }
+        if (aliConfigured && aliScriptPath.isEmpty())
+            qWarning() << "ApiServer: alibaba_provision_sender.py not found — new mailboxes will not be able to send";
 
-        // Helper: call the Alibaba Python script asynchronously to create a sender
+        // Registers the address with DirectMail and gives it its own SMTP password (DirectMail only
+        // lets a login send as itself). Runs synchronously: this httplib worker thread has no Qt
+        // event loop, so QProcess::finished would never be delivered.
         auto createAliSender = [&](const QString& email) {
             if (!aliConfigured || aliScriptPath.isEmpty()) return;
-            QProcess* proc = new QProcess();
-            proc->setArguments({aliScriptPath, email,
-                                "--access-key-id", aliAccessKey,
-                                "--secret", aliSecret,
-                                "--region", aliRegion,
-                                "--quiet"});
-            proc->setProgram("python3");
-            QObject::connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                            [proc](int code, QProcess::ExitStatus) {
-                if (code != 0) {
-                    QByteArray err = proc->readAllStandardError();
-                    qWarning() << "Alibaba sender creation failed:" << QString::fromUtf8(err).trimmed();
-                } else {
-                    qInfo() << "Alibaba sender created:" << proc->readAllStandardOutput().trimmed();
-                }
-                proc->deleteLater();
-            });
-            proc->start();
+            QProcess proc;
+            proc.start("python3", {aliScriptPath, email, "--config", m_configFilePath, "--quiet"});
+            if (!proc.waitForFinished(60000)) {
+                proc.kill();
+                qWarning() << "DirectMail provisioning timed out for" << email;
+                return;
+            }
+            if (proc.exitCode() != 0)
+                qWarning() << "DirectMail provisioning failed for" << email << ":"
+                           << QString::fromUtf8(proc.readAllStandardError()).trimmed();
+            else
+                qInfo() << "DirectMail sender provisioned:" << email;
         };
 
         // ============================================
@@ -1044,6 +1042,7 @@ bool ApiServer::start() {
             // Base64 attachments inflate 25 MB of mail to ~34 MB of JSON.
             m_server->set_payload_max_length(40 * 1024 * 1024);
 
+            m_server->set_file_extension_and_mimetype_mapping("webmanifest", "application/manifest+json");
             const QStringList webmailDirs = {QDir::currentPath() + "/webmail",
                                              QDir::currentPath() + "/../webmail"};
             for (const QString& dir : webmailDirs) {

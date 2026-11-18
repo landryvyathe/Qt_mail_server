@@ -16,7 +16,7 @@ class ConfigManager;
 class ApiServer : public QObject {
     Q_OBJECT
 public:
-    explicit ApiServer(const ConfigManager& config, QObject* parent = nullptr);
+    explicit ApiServer(const ConfigManager& config, const QString& configFilePath, QObject* parent = nullptr);
     ~ApiServer();
 
     bool start();
@@ -26,6 +26,7 @@ public:
 
 private:
     const ConfigManager& m_config;
+    QString m_configFilePath;
 
     // server runs in its own thread and is stopped via m_stopFlag
     std::unique_ptr<httplib::Server> m_server;  // owned here, accessed only from worker thread
