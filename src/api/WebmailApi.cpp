@@ -4,6 +4,8 @@
 #include "../queue/QueueManager.h"
 #include "../services/ImapMime.h"
 #include "../storage/MaildirStorage.h"
+#include "../storage/UserSettings.h"
+#include "WebmailUtil.h"
 
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
@@ -17,57 +19,24 @@
 #include <QMutexLocker>
 #include <QRandomGenerator>
 #include <QRegularExpression>
+#include <QTimeZone>
 #include <QUrl>
 #include <algorithm>
 
 namespace {
+using namespace WebmailUtil;
 
 constexpr qint64 kSessionTtlSecs = 8 * 3600;
 constexpr int    kMaxPageSize = 100;
 constexpr int    kMaxRecipients = 100;
 constexpr qint64 kMaxMessageBytes = 25LL * 1024 * 1024;
-const QStringList kDefaultFolders = {"Sent", "Drafts", "Trash", "Junk"};
+const QStringList kDefaultFolders = {"Sent", "Drafts", "Trash", "Junk", "Archive", "Snoozed"};
 
-void sendJson(httplib::Response& res, int code, const QJsonValue& value) {
-    res.status = code;
-    const QByteArray body = value.isArray()
-        ? QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact)
-        : QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact);
-    res.set_content(body.toStdString(), "application/json; charset=utf-8");
-}
 
-void sendError(httplib::Response& res, int code, const QString& message) {
-    sendJson(res, code, QJsonObject{{"error", message}});
-}
 
-bool parseBody(const httplib::Request& req, httplib::Response& res, QJsonObject& out) {
-    QJsonParseError err;
-    const QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(req.body), &err);
-    if (err.error != QJsonParseError::NoError || !doc.isObject()) {
-        sendError(res, 400, "Invalid JSON body");
-        return false;
-    }
-    out = doc.object();
-    return true;
-}
 
-QString queryParam(const httplib::Request& req, const char* name) {
-    return req.has_param(name) ? QString::fromStdString(req.get_param_value(name)) : QString();
-}
 
-// "INBOX", a safe folder name, or empty when the name is invalid.
-QString normalizeFolder(const QString& raw) {
-    const QString name = raw.trimmed();
-    if (name.compare("INBOX", Qt::CaseInsensitive) == 0) return "INBOX";
-    static const QRegularExpression bad(R"([/\\*%"\x00-\x1f]|\.\.|^\.|\.$)");
-    if (name.isEmpty() || name.size() > 200 || bad.match(name).hasMatch()) return {};
-    return name;
-}
 
-QString flagLetters(const QString& fileName) {
-    const int idx = fileName.indexOf(":2,");
-    return idx >= 0 ? fileName.mid(idx + 3) : QString();
-}
 
 QString folderRole(const QString& name) {
     if (name == "INBOX") return "inbox";
@@ -75,6 +44,8 @@ QString folderRole(const QString& name) {
     if (name == "Drafts") return "drafts";
     if (name == "Trash") return "trash";
     if (name == "Junk") return "junk";
+    if (name == "Archive") return "archive";
+    if (name == "Snoozed") return "snoozed";
     return {};
 }
 
@@ -85,9 +56,6 @@ QList<int> uidList(const QJsonObject& body) {
     return uids;
 }
 
-QString headerText(const QByteArray& header, const char* name) {
-    return QString::fromUtf8(ImapMime::headerValue(header, name));
-}
 
 // ---- MIME building --------------------------------------------------------
 
@@ -179,12 +147,65 @@ QByteArray buildMime(const Outgoing& m, const QString& hostname) {
     return out + "--" + mixed + "--\r\n";
 }
 
+struct SearchQuery {
+    QStringList words, from, to, subject, labels;
+    bool hasAttachment = false, unread = false, read = false, starred = false;
+    qint64 beforeMs = 0, afterMs = 0;
+    bool needsHeader() const {
+        return !words.isEmpty() || !from.isEmpty() || !to.isEmpty() || !subject.isEmpty()
+            || !labels.isEmpty() || hasAttachment;
+    }
+};
+
+qint64 dayStartMs(const QString& text) {
+    QDate d = QDate::fromString(text, Qt::ISODate);
+    if (!d.isValid()) d = QDate::fromString(text, "yyyy/MM/dd");
+    return d.isValid() ? QDateTime(d, QTime(0, 0), Qt::UTC).toMSecsSinceEpoch() : 0;
+}
+
+// Gmail-style operators: from: to: subject: label: has:attachment is:unread|read|starred before: after:
+SearchQuery parseQuery(const QString& q) {
+    SearchQuery out;
+    static const QRegularExpression tok(R"re((\w+):"([^"]*)"|(\w+):(\S+)|"([^"]*)"|(\S+))re");
+    for (auto it = tok.globalMatch(q); it.hasNext();) {
+        const auto m = it.next();
+        const QString key = (m.captured(1).isEmpty() ? m.captured(3) : m.captured(1)).toLower();
+        const QString val = m.captured(1).isEmpty() ? m.captured(4) : m.captured(2);
+        if (key.isEmpty()) { out.words << (m.captured(5).isEmpty() ? m.captured(6) : m.captured(5)); continue; }
+        if (key == "from") out.from << val;
+        else if (key == "to") out.to << val;
+        else if (key == "subject") out.subject << val;
+        else if (key == "label") out.labels << val;
+        else if (key == "has" && val.toLower().startsWith("attach")) out.hasAttachment = true;
+        else if (key == "is" && val.toLower() == "unread") out.unread = true;
+        else if (key == "is" && val.toLower() == "read") out.read = true;
+        else if (key == "is" && (val.toLower() == "starred" || val.toLower() == "flagged")) out.starred = true;
+        else if (key == "before") out.beforeMs = dayStartMs(val);
+        else if (key == "after") out.afterMs = dayStartMs(val);
+        else out.words << m.captured(0);
+    }
+    return out;
+}
+
+bool containsAll(const QString& hay, const QStringList& needles) {
+    for (const QString& n : needles) if (!hay.contains(n, Qt::CaseInsensitive)) return false;
+    return true;
+}
+
+
 } // namespace
 
 WebmailApi::WebmailApi(const ConfigManager& config, const WebmailServices& services)
     : m_config(config), m_services(services),
       m_localDomains(config.localDomains()), m_hostname(config.hostname()) {
     for (QString& d : m_localDomains) d = d.toLower();
+    m_snoozeThread = std::thread([this] { snoozeLoop(); });
+}
+
+WebmailApi::~WebmailApi() {
+    m_stopping = true;
+    m_wake.notify_all();
+    if (m_snoozeThread.joinable()) m_snoozeThread.join();
 }
 
 // ---- sessions ---------------------------------------------------------------
@@ -227,8 +248,19 @@ void WebmailApi::dropSession(const httplib::Request& req) {
 
 // ---- helpers ------------------------------------------------------------------
 
+QString WebmailApi::folderKeyFor(const QString& user, const QString& folder) {
+    return folder == "INBOX" ? user : user + "/." + folder;
+}
+
 QString WebmailApi::folderKey(const Session& s, const QString& folder) const {
-    return folder == "INBOX" ? s.user : s.user + "/." + folder;
+    return folderKeyFor(s.user, folder);
+}
+
+QStringList WebmailApi::allMailFolders(const QString& user) const {
+    QStringList out = {"INBOX"};
+    for (const QString& f : m_services.storage->listMailboxes(user))
+        if (f != "Trash" && f != "Junk" && f != "Drafts" && f != "Snoozed") out << f;
+    return out;
 }
 
 bool WebmailApi::folderExists(const Session& s, const QString& folder) const {
@@ -239,19 +271,20 @@ bool WebmailApi::isLocalAddress(const QString& email) const {
     return m_localDomains.contains(email.section('@', 1).toLower());
 }
 
-bool WebmailApi::moveMessages(const Session& s, const QString& from, const QList<int>& uids, const QString& to) {
+bool WebmailApi::moveMessages(const QString& user, const QString& from, const QList<int>& uids, const QString& to) {
     MaildirStorage* st = m_services.storage;
-    const QList<MailEntry> entries = st->listMessages(folderKey(s, from));
+    auto folderKey = [&user](const QString& f) { return folderKeyFor(user, f); };
+    const QList<MailEntry> entries = st->listMessages(folderKey(from));
     for (int uid : uids) {
         auto it = std::find_if(entries.begin(), entries.end(), [uid](const MailEntry& e) { return e.uid == uid; });
         if (it == entries.end()) continue;
-        const MailEntry full = st->loadMessage(folderKey(s, from), uid);
-        const int newUid = st->storeMessage(folderKey(s, to), full.rawMessage);
+        const MailEntry full = st->loadMessage(folderKey(from), uid);
+        const int newUid = st->storeMessage(folderKey(to), full.rawMessage);
         if (newUid < 0) return false;
         QString letters = flagLetters(it->fileName);
         letters.remove('T');
-        st->setFlags(folderKey(s, to), newUid, letters);
-        st->deleteMessage(folderKey(s, from), uid);
+        st->setFlags(folderKey(to), newUid, letters);
+        st->deleteMessage(folderKey(from), uid);
     }
     return true;
 }
@@ -329,6 +362,27 @@ void WebmailApi::registerRoutes(httplib::Server& server) {
     server.Post("/api/mail/send", authedJson([this](const Session& s, const QJsonObject& b, httplib::Response& res) {
         handleSend(s, b, res, false);
     }));
+    server.Get("/api/mail/settings", authed([this](const Session& s, const httplib::Request&, httplib::Response& res) {
+        handleSettingsGet(s, res);
+    }));
+    server.Post("/api/mail/settings", authedJson([this](const Session& s, const QJsonObject& b, httplib::Response& res) {
+        handleSettingsSave(s, b, res);
+    }));
+    server.Post("/api/mail/labels", authedJson([this](const Session& s, const QJsonObject& b, httplib::Response& res) {
+        handleLabels(s, b, res);
+    }));
+    server.Post("/api/mail/snooze", authedJson([this](const Session& s, const QJsonObject& b, httplib::Response& res) {
+        handleSnooze(s, b, res);
+    }));
+    server.Get("/api/mail/thread", authed([this](const Session& s, const httplib::Request& req, httplib::Response& res) {
+        handleThread(s, req, res);
+    }));
+    server.Get("/api/mail/contacts", authed([this](const Session& s, const httplib::Request& req, httplib::Response& res) {
+        handleContacts(s, req, res);
+    }));
+    server.Post("/api/mail/contacts", authedJson([this](const Session& s, const QJsonObject& b, httplib::Response& res) {
+        handleContactsSave(s, b, res);
+    }));
     server.Post("/api/mail/draft", authedJson([this](const Session& s, const QJsonObject& b, httplib::Response& res) {
         handleSend(s, b, res, true);
     }));
@@ -382,42 +436,67 @@ void WebmailApi::handleFolderAction(const Session& s, const QJsonObject& body, h
 }
 
 void WebmailApi::handleList(const Session& s, const httplib::Request& req, httplib::Response& res) {
-    const QString folder = normalizeFolder(queryParam(req, "folder"));
-    if (!folderExists(s, folder)) { sendError(res, 404, "No such folder"); return; }
+    const QString raw = queryParam(req, "folder");
+    const bool allMail = raw == "ALL";
+    const QString folder = allMail ? QString("ALL") : normalizeFolder(raw);
+    if (!allMail && !folderExists(s, folder)) { sendError(res, 404, "No such folder"); return; }
     const int offset = std::max(0, queryParam(req, "offset").toInt());
     const int limit = std::clamp(queryParam(req, "limit").toInt(), 1, kMaxPageSize);
-    const QString query = queryParam(req, "q").trimmed();
+    const SearchQuery q = parseQuery(queryParam(req, "q").trimmed());
 
-    QList<MailEntry> entries = m_services.storage->listMessages(folderKey(s, folder));
-    std::sort(entries.begin(), entries.end(), [](const MailEntry& a, const MailEntry& b) { return a.uid > b.uid; });
+    struct Item { QString folder; MailEntry e; };
+    QList<Item> all;
+    for (const QString& f : allMail ? allMailFolders(s.user) : QStringList{folder})
+        for (const MailEntry& e : m_services.storage->listMessages(folderKey(s, f)))
+            if (e.uid > 0) all.append({f, e});
+    std::sort(all.begin(), all.end(), [](const Item& a, const Item& b) {
+        return a.e.date != b.e.date ? a.e.date > b.e.date : a.e.uid > b.e.uid;
+    });
+
+    const QJsonObject settings = UserSettings::load(m_services.storage->basePath(), s.user);
+    const QJsonObject labelMap = settings.value("messageLabels").toObject();
+    QHash<QString, qint64> snoozed;
+    for (const QJsonValue& v : settings.value("snoozes").toArray())
+        snoozed.insert(v.toObject().value("messageId").toString(), v.toObject().value("until").toInteger());
 
     QJsonArray items;
     int matched = 0;
-    for (const MailEntry& e : entries) {
-        if (e.uid < 1) continue;
-        const bool needHeader = !query.isEmpty() || (matched >= offset && items.size() < limit);
-        if (!needHeader) { ++matched; continue; }
-        const QByteArray header = m_services.storage->loadHeader(folderKey(s, folder), e.uid);
-        if (!query.isEmpty()) {
-            const QString hay = headerText(header, "From") + ' ' + headerText(header, "To") + ' '
-                              + headerText(header, "Subject");
-            if (!hay.contains(query, Qt::CaseInsensitive)) continue;
+    for (const Item& it : all) {
+        const QString letters = flagLetters(it.e.fileName);
+        const qint64 received = it.e.date.toMSecsSinceEpoch();
+        if ((q.unread && letters.contains('S')) || (q.read && !letters.contains('S'))
+            || (q.starred && !letters.contains('F'))
+            || (q.beforeMs && received >= q.beforeMs) || (q.afterMs && received < q.afterMs))
+            continue;
+        const bool inPage = matched >= offset && items.size() < limit;
+        if (!q.needsHeader() && !inPage) { ++matched; continue; }
+
+        const QByteArray header = m_services.storage->loadHeader(folderKey(s, it.folder), it.e.uid);
+        const QString from = headerText(header, "From"), to = headerText(header, "To") + ' ' + headerText(header, "Cc");
+        const QString subject = headerText(header, "Subject");
+        const QString ctype = headerText(header, "Content-Type").toLower();
+        const bool attachment = ctype.startsWith("multipart/mixed") || ctype.startsWith("multipart/related");
+        const QString messageId = headerText(header, "Message-ID").trimmed();
+        const QJsonArray labels = labelMap.value(messageId).toArray();
+        if (q.needsHeader()) {
+            QStringList labelNames;
+            for (const QJsonValue& l : labels) labelNames << l.toString().toLower();
+            bool ok = containsAll(from, q.from) && containsAll(to, q.to) && containsAll(subject, q.subject)
+                   && containsAll(from + ' ' + to + ' ' + subject, q.words) && (!q.hasAttachment || attachment);
+            for (const QString& l : q.labels) ok = ok && labelNames.contains(l.toLower());
+            if (!ok) continue;
         }
         if (matched++ < offset || items.size() >= limit) continue;
-        const QString letters = flagLetters(e.fileName);
-        const QString ctype = headerText(header, "Content-Type").toLower();
         items.append(QJsonObject{
-            {"uid", e.uid},
-            {"from", headerText(header, "From")},
-            {"to", headerText(header, "To")},
-            {"subject", headerText(header, "Subject")},
-            {"date", headerText(header, "Date")},
-            {"received", e.date.toMSecsSinceEpoch()},
-            {"size", e.size},
-            {"seen", letters.contains('S')},
-            {"flagged", letters.contains('F')},
-            {"answered", letters.contains('R')},
-            {"attachment", ctype.startsWith("multipart/mixed") || ctype.startsWith("multipart/related")},
+            {"uid", it.e.uid}, {"folder", it.folder},
+            {"from", from}, {"to", headerText(header, "To")}, {"subject", subject},
+            {"date", headerText(header, "Date")}, {"received", received}, {"size", it.e.size},
+            {"seen", letters.contains('S')}, {"flagged", letters.contains('F')},
+            {"answered", letters.contains('R')}, {"attachment", attachment},
+            {"messageId", messageId}, {"inReplyTo", headerText(header, "In-Reply-To").trimmed()},
+            {"references", headerText(header, "References").trimmed().right(2000)},
+            {"labels", labels},
+            {"snoozeUntil", snoozed.value(messageId, 0)},
         });
     }
     sendJson(res, 200, QJsonObject{{"folder", folder}, {"total", matched}, {"offset", offset}, {"messages", items}});
@@ -433,6 +512,14 @@ void WebmailApi::handleMessage(const Session& s, const httplib::Request& req, ht
     if (e.rawMessage.isNull()) { sendError(res, 404, "No such message"); return; }
     if (queryParam(req, "peek") != "1" && !flagLetters(e.fileName).contains('S'))
         m_services.storage->setFlags(key, uid, flagLetters(e.fileName) + 'S');
+    if (folder != "Sent" && folder != "Drafts" && folder != "Junk") {
+        QString name;
+        const QString from = addressOf(QString::fromUtf8(ImapMime::headerValue(
+            ImapMime::headerBlock(ImapMime::toCrlf(e.rawMessage.left(65536))), "From")), &name);
+        if (from != s.email)
+            UserSettings::update(m_services.storage->basePath(), s.user,
+                                 [&](QJsonObject& st) { UserSettings::rememberContact(st, from, name); });
+    }
 
     res.status = 200;
     res.set_header("Cache-Control", "no-store");
@@ -463,7 +550,7 @@ void WebmailApi::handleMove(const Session& s, const QJsonObject& body, httplib::
     const QString to = normalizeFolder(body.value("to").toString());
     if (!folderExists(s, from) || !folderExists(s, to)) { sendError(res, 404, "No such folder"); return; }
     if (from == to) { sendJson(res, 200, QJsonObject{{"status", "ok"}}); return; }
-    if (!moveMessages(s, from, uidList(body), to)) { sendError(res, 500, "Move failed"); return; }
+    if (!moveMessages(s.user, from, uidList(body), to)) { sendError(res, 500, "Move failed"); return; }
     sendJson(res, 200, QJsonObject{{"status", "ok"}});
 }
 
@@ -473,7 +560,7 @@ void WebmailApi::handleDelete(const Session& s, const QJsonObject& body, httplib
     const QList<int> uids = uidList(body);
     if (folder == "Trash" || body.value("permanent").toBool()) {
         for (int uid : uids) m_services.storage->deleteMessage(folderKey(s, folder), uid);
-    } else if (!moveMessages(s, folder, uids, "Trash")) {
+    } else if (!moveMessages(s.user, folder, uids, "Trash")) {
         sendError(res, 500, "Delete failed");
         return;
     }
@@ -548,6 +635,9 @@ void WebmailApi::handleSend(const Session& s, const QJsonObject& body, httplib::
         return;
     }
 
+    UserSettings::update(st->basePath(), s.user, [&](QJsonObject& settings) {
+        for (const QString& r : m.to + m.cc + m.bcc) UserSettings::rememberContact(settings, r, QString());
+    });
     const int sentUid = st->storeMessage(folderKey(s, "Sent"), mime);
     if (sentUid > 0) st->setFlags(folderKey(s, "Sent"), sentUid, "S");
 

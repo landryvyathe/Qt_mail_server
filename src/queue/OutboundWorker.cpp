@@ -17,8 +17,8 @@
 // ---------------------------------------------------------------------------
 // constructor
 // ---------------------------------------------------------------------------
-OutboundWorker::OutboundWorker(const ConfigManager& config, QObject* parent)
-    : QObject(parent), m_config(config), m_stopping(false), m_maxRetries(8) {
+OutboundWorker::OutboundWorker(const ConfigManager& config, const QString& configFilePath, QObject* parent)
+    : QObject(parent), m_config(config), m_configFilePath(configFilePath), m_stopping(false), m_maxRetries(8) {
 
     auto oc = m_config.outbound();
     m_spoolDir = oc.spoolDir.isEmpty() ? QStringLiteral("./spool") : oc.spoolDir;
@@ -414,12 +414,13 @@ OutboundWorker::SmtpDeliveryResult OutboundWorker::deliverViaRelay(OutboundEmail
     QString authPass = m_relay.password;
     const QString senderAddress = email.envelopeFrom.trimmed().toLower();
     const QString senderDomain = senderAddress.section('@', 1);
-    if (m_relay.senderPasswords.contains(senderAddress)) {
+    const QHash<QString, QString> senderPasswords = liveSenderPasswords();
+    if (senderPasswords.contains(senderAddress)) {
         authUser = senderAddress;
-        authPass = m_relay.senderPasswords.value(senderAddress);
-    } else if (m_relay.senderPasswords.contains(senderDomain)) {
+        authPass = senderPasswords.value(senderAddress);
+    } else if (senderPasswords.contains(senderDomain)) {
         authUser = senderAddress;
-        authPass = m_relay.senderPasswords.value(senderDomain);
+        authPass = senderPasswords.value(senderDomain);
     }
     if (!authUser.isEmpty() && !authPass.isEmpty()) {
         qInfo() << "OutboundWorker: authenticating to relay as" << authUser;
@@ -538,6 +539,31 @@ bool OutboundWorker::smtpAuthPlain(QSslSocket* s, const QString& user, const QSt
 
     QByteArray cmd = "AUTH PLAIN " + auth.toBase64() + "\r\n";
     return smtpSendCommand(s, cmd, 235, code, text);
+}
+
+// ---------------------------------------------------------------------------
+// Live sender_passwords (re-read from disk so a newly auto-provisioned
+// DirectMail sender can send without waiting for a service restart)
+// ---------------------------------------------------------------------------
+QHash<QString, QString> OutboundWorker::liveSenderPasswords() const {
+    if (m_configFilePath.isEmpty()) return m_relay.senderPasswords;
+
+    QFile file(m_configFilePath);
+    if (!file.open(QIODevice::ReadOnly)) return m_relay.senderPasswords;
+
+    QJsonParseError err;
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &err);
+    file.close();
+    if (err.error != QJsonParseError::NoError) return m_relay.senderPasswords;
+
+    QJsonObject senderPw = doc.object().value("outbound").toObject()
+                               .value("relay").toObject()
+                               .value("sender_passwords").toObject();
+    QHash<QString, QString> result;
+    for (auto it = senderPw.constBegin(); it != senderPw.constEnd(); ++it) {
+        result.insert(it.key().toLower(), it.value().toString());
+    }
+    return result;
 }
 
 // ---------------------------------------------------------------------------

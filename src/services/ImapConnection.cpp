@@ -20,7 +20,7 @@ const int kIdleTimeoutMs = 300000;
 const int kLiteralTimeoutMs = 30000;
 const qint64 kMaxAppendBytes = 50LL * 1024 * 1024;
 const char* kCapabilities = "IMAP4rev1 LITERAL+ ID NAMESPACE UNSELECT MOVE SPECIAL-USE";
-const char* const kDefaultFolders[] = {"Sent", "Drafts", "Trash", "Junk"};
+const char* const kDefaultFolders[] = {"Sent", "Drafts", "Trash", "Junk", "Archive", "Snoozed"};
 
 QString stripQuotes(const QString& s) { return ImapMime::unquote(s.trimmed()); }
 
@@ -336,6 +336,7 @@ void ImapConnection::listMailboxes(const QString& tag, const QString& cmd, const
         else if (name == "Drafts") attrs << "\\Drafts";
         else if (name == "Trash") attrs << "\\Trash";
         else if (name == "Junk") attrs << "\\Junk";
+        else if (name == "Archive") attrs << "\\Archive";
         sendUntagged(QString("%1 (%2) \".\" %3").arg(cmd, attrs.join(' '),
                      QString::fromUtf8(ImapMime::nstring(name.toUtf8()))));
     }

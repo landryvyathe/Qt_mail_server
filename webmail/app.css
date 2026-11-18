@@ -144,6 +144,12 @@ button { cursor: pointer; }
 .msg .subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .msg .marks { display: flex; gap: 4px; color: var(--muted); align-items: center; justify-content: flex-end; }
 .msg .marks .flag { color: var(--danger); }
+.star-btn { border: 0; background: transparent; padding: 2px; color: var(--border); cursor: pointer; display: flex; }
+.star-btn.on { color: #f2b01e; }
+.important-dot { color: #e8710a; margin-right: 4px; display: inline-flex; vertical-align: middle; }
+.compose-row textarea { flex: 1; border: 0; outline: 0; background: transparent; padding: 10px 0; min-width: 0;
+                         resize: vertical; font: inherit; }
+.settings-dialog { width: min(560px, 92vw); }
 .list-foot { padding: 8px 12px; display: flex; justify-content: space-between; align-items: center;
              border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
 .empty { padding: 40px 20px; text-align: center; color: var(--muted); }

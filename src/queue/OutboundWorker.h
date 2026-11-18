@@ -19,7 +19,7 @@ struct OutboundEmail {
 class OutboundWorker : public QObject {
     Q_OBJECT
 public:
-    explicit OutboundWorker(const ConfigManager& config, QObject *parent = nullptr);
+    explicit OutboundWorker(const ConfigManager& config, const QString& configFilePath, QObject *parent = nullptr);
     ~OutboundWorker();
     void start();
     void stop();
@@ -59,7 +59,12 @@ private:
     // -- DKIM signing --
     QByteArray signDkim(const QByteArray& rawEmail);
 
+    // Re-reads sender_passwords from disk so an address registered with DirectMail after
+    // startup (e.g. by auto-provisioning on account creation) can send without a restart.
+    QHash<QString, QString> liveSenderPasswords() const;
+
     const ConfigManager& m_config;
+    QString m_configFilePath;
     QString m_spoolDir;
     QString m_hostname;
     ConfigManager::RelayConfig m_relay;

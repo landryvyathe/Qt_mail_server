@@ -6,6 +6,10 @@
 #include <QMutex>
 #include <QString>
 #include <QStringList>
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 
 namespace httplib {
 class Server;
@@ -29,6 +33,7 @@ struct WebmailServices {
 class WebmailApi {
 public:
     WebmailApi(const ConfigManager& config, const WebmailServices& services);
+    ~WebmailApi();
     void registerRoutes(httplib::Server& server);
 
 private:
@@ -51,8 +56,21 @@ private:
     void handleDelete(const Session& s, const QJsonObject& body, httplib::Response& res);
     void handleSend(const Session& s, const QJsonObject& body, httplib::Response& res, bool draft);
 
-    bool moveMessages(const Session& s, const QString& from, const QList<int>& uids, const QString& to);
+    // Gmail-style features (WebmailFeatures.cpp)
+    void handleSettingsGet(const Session& s, httplib::Response& res);
+    void handleSettingsSave(const Session& s, const QJsonObject& body, httplib::Response& res);
+    void handleLabels(const Session& s, const QJsonObject& body, httplib::Response& res);
+    void handleSnooze(const Session& s, const QJsonObject& body, httplib::Response& res);
+    void handleThread(const Session& s, const httplib::Request& req, httplib::Response& res);
+    void handleContacts(const Session& s, const httplib::Request& req, httplib::Response& res);
+    void handleContactsSave(const Session& s, const QJsonObject& body, httplib::Response& res);
+    void snoozeLoop();
+    void wakeDueSnoozes(const QString& user);
+
+    bool moveMessages(const QString& user, const QString& from, const QList<int>& uids, const QString& to);
+    QStringList allMailFolders(const QString& user) const;
     QString folderKey(const Session& s, const QString& folder) const;
+    static QString folderKeyFor(const QString& user, const QString& folder);
     bool folderExists(const Session& s, const QString& folder) const;
     bool isLocalAddress(const QString& email) const;
 
@@ -62,6 +80,10 @@ private:
     QString              m_hostname;
     QHash<QString, Session> m_sessions;
     QMutex               m_sessionMutex;
+    std::thread          m_snoozeThread;
+    std::atomic<bool>    m_stopping{false};
+    std::mutex           m_wakeMutex;
+    std::condition_variable m_wake;
 };
 
 #endif // WEBMAILAPI_H

@@ -4,6 +4,7 @@
 #include "../tls/TlsContext.h"
 #include "../utils/RateLimiter.h"
 #include "../queue/QueueManager.h"
+#include "../storage/UserSettings.h"
 #include <QDebug>
 #include <QEventLoop>
 #include <QThread>
@@ -117,6 +118,13 @@ void SmtpConnection::run() {
                                     + m_messageData;
                                 int uid = m_storage->storeMessage(user, storedMsg);
                                 if (uid > 0) storedCount++;
+                                if (uid > 0 && m_queueMgr && !m_sender.isEmpty()) {
+                                    const QByteArray reply = UserSettings::autoReplyFor(
+                                        m_storage->basePath(), user, rcpt.toLower().trimmed(),
+                                        m_sender, m_messageData, m_hostname);
+                                    if (!reply.isEmpty())
+                                        m_queueMgr->spoolMessage(reply, rcpt.toLower().trimmed(), {m_sender});
+                                }
                             } else {
                                 // Remote recipient — route through outbound queue
                                 remoteRcpt << rcpt;

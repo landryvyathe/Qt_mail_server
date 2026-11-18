@@ -4,11 +4,21 @@ const PAGE_SIZE = 50;
 const POLL_MS = 60000;
 const MAX_SEND_BYTES = 25 * 1024 * 1024;
 const FOLDER_ORDER = ['INBOX', 'Drafts', 'Sent', 'Trash', 'Junk'];
-const FOLDER_LABELS = { INBOX: 'Inbox', Drafts: 'Drafts', Sent: 'Sent Items', Trash: 'Deleted Items', Junk: 'Junk Email' };
+const FOLDER_LABELS = { INBOX: 'Inbox', Drafts: 'Drafts', Sent: 'Sent Items', Trash: 'Trash', Junk: 'Spam' };
+const IMPORTANT_LABEL = 'important';
+
+// Gmail-style views that aren't real IMAP folders: they reuse All-Mail search (folder=ALL)
+// with a fixed query the user's own search terms are appended to.
+const VIRTUAL_NAV = [
+  { key: 'Starred', label: 'Starred', navIcon: 'star', folder: 'ALL', baseQuery: 'is:starred' },
+  { key: 'Important', label: 'Important', navIcon: 'important', folder: 'ALL', baseQuery: `label:${IMPORTANT_LABEL}` },
+];
+const ALL_MAIL_NAV = { key: 'AllMail', label: 'All Mail', navIcon: 'allmail', folder: 'ALL', baseQuery: '' };
 
 const state = {
   token: null, email: null, folders: [], usedBytes: 0, quotaBytes: 0,
-  folder: 'INBOX', messages: [], total: 0, offset: 0, query: '',
+  folder: 'INBOX', navKey: 'INBOX', baseQuery: '', userQuery: '',
+  messages: [], total: 0, offset: 0, query: '',
   selected: new Set(), openUid: null, showImages: false, blobUrls: [],
 };
 
@@ -36,6 +46,10 @@ const ICONS = {
   clip: 'M8 12l7-7a3 3 0 014 4l-9 9a5 5 0 01-7-7l8-8', search: 'M11 4a7 7 0 100 14 7 7 0 000-14z M20 20l-4-4',
   menu: 'M4 7h16 M4 12h16 M4 17h16', back: 'M15 5l-7 7 7 7', close: 'M6 6l12 12 M18 6L6 18', logout: 'M15 4h4v16h-4 M10 8l-4 4 4 4 M6 12h10',
   more: 'M5 12h.01 M12 12h.01 M19 12h.01', download: 'M12 4v11 M7 10l5 5 5-5 M5 20h14',
+  star: 'M12 3l2.6 5.6 6.1.6-4.6 4.2 1.3 6-5.4-3.2-5.4 3.2 1.3-6-4.6-4.2 6.1-.6z',
+  important: 'M4 6h11l5 6-5 6H4z', allmail: 'M3 6h18v12H3z M3 7l9 6 9-6 M3 17l6-5 M21 17l-6-5',
+  gear: 'M12 9a3 3 0 100 6 3 3 0 000-6z M19 12a7 7 0 00-.2-1.6l2-1.6-2-3.4-2.4.8a7 7 0 00-2.8-1.6L13 2h-4l-.6 2.6a7 7 0 00-2.8 1.6l-2.4-.8-2 3.4 2 1.6A7 7 0 003 12a7 7 0 00.2 1.6l-2 1.6 2 3.4 2.4-.8a7 7 0 002.8 1.6L9 22h4l.6-2.6a7 7 0 002.8-1.6l2.4.8 2-3.4-2-1.6c.13-.52.2-1.06.2-1.6z',
+  snoozed: 'M12 7v5l3 3 M12 2a10 10 0 100 20 10 10 0 000-20z',
 };
 function icon(name) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -113,8 +127,24 @@ function formatSize(n) {
   return `${(n / 1048576).toFixed(1)} MB`;
 }
 function folderLabel(name) { return FOLDER_LABELS[name] || name.split('.').pop(); }
+function navLabel() {
+  const v = [...VIRTUAL_NAV, ALL_MAIL_NAV].find(d => d.key === state.navKey);
+  return v ? v.label : folderLabel(state.navKey);
+}
+// Messages can come from mixed real folders when viewing All Mail/Starred/Important;
+// group by each message's own folder so bulk actions hit the right IMAP mailbox.
+function groupByFolder(uids) {
+  const groups = new Map();
+  for (const uid of uids) {
+    const m = state.messages.find(x => x.uid === uid);
+    const folder = m ? m.folder : state.folder;
+    if (!groups.has(folder)) groups.set(folder, []);
+    groups.get(folder).push(uid);
+  }
+  return groups;
+}
 function folderIcon(f) {
-  return { inbox: 'inbox', sent: 'send', drafts: 'drafts', trash: 'trash', junk: 'junk' }[f.role] || 'folder';
+  return { inbox: 'inbox', sent: 'send', drafts: 'drafts', trash: 'trash', junk: 'junk', snoozed: 'snoozed' }[f.role] || 'folder';
 }
 
 // ---------- login ----------
@@ -179,7 +209,7 @@ function startApp() {
   let searchTimer;
   searchInput.addEventListener('input', () => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => { state.query = searchInput.value.trim(); loadMessages(true); }, 350);
+    searchTimer = setTimeout(() => { state.userQuery = searchInput.value.trim(); loadMessages(true); }, 350);
   });
   ui.shell = h('div', { class: 'shell' },
     h('header', { class: 'topbar' },
@@ -225,11 +255,25 @@ async function loadFolders() {
   renderNav();
 }
 
+// Real folders Gmail groups away from the main list (still real IMAP folders, just ordered last).
+const TAIL_FOLDERS = ['Junk', 'Trash'];
+
+function virtualNavItem(def, extra = {}) {
+  return h('li', {
+    class: `folder${def.key === state.navKey ? ' active' : ''}`,
+    tabindex: 0, role: 'button', 'aria-current': def.key === state.navKey ? 'true' : false,
+    onclick: () => selectNav(def),
+    onkeydown: (e) => { if (e.key === 'Enter') selectNav(def); },
+  }, icon(def.navIcon), h('span', { class: 'name' }, def.label), extra.count ? h('span', { class: 'count' }, extra.count) : null);
+}
+
 function renderNav() {
-  const items = state.folders.map(f => {
+  const byName = (n) => state.folders.find(f => f.name === n);
+
+  const realItem = (f) => {
     const li = h('li', {
-      class: `folder${f.name === state.folder ? ' active' : ''}${f.name.includes('.') ? ' child' : ''}`,
-      tabindex: 0, role: 'button', 'aria-current': f.name === state.folder ? 'true' : false,
+      class: `folder${f.name === state.navKey ? ' active' : ''}${f.name.includes('.') ? ' child' : ''}`,
+      tabindex: 0, role: 'button', 'aria-current': f.name === state.navKey ? 'true' : false,
       onclick: () => selectFolder(f.name),
       onkeydown: (e) => { if (e.key === 'Enter') selectFolder(f.name); },
       oncontextmenu: (e) => { if (!f.role) { e.preventDefault(); folderMenu(e.currentTarget, f); } },
@@ -245,20 +289,54 @@ function renderNav() {
       if (uids.length) moveTo(uids, f.name);
     });
     return li;
-  });
+  };
+
+  const inbox = byName('INBOX');
+  const sent = byName('Sent');
+  const drafts = byName('Drafts');
+  const snoozed = byName('Snoozed');
+  const custom = state.folders.filter(f => !['INBOX', 'Sent', 'Drafts', 'Snoozed', ...TAIL_FOLDERS].includes(f.name));
+  const tail = TAIL_FOLDERS.map(byName).filter(Boolean);
+
+  const items = [
+    inbox ? realItem(inbox) : null,
+    virtualNavItem(VIRTUAL_NAV[0]), // Starred
+    snoozed ? realItem(snoozed) : null,
+    virtualNavItem(VIRTUAL_NAV[1]), // Important
+    sent ? realItem(sent) : null,
+    drafts ? realItem(drafts) : null,
+    virtualNavItem(ALL_MAIL_NAV),
+    ...custom.map(realItem),
+    ...tail.map(realItem),
+  ].filter(Boolean);
+
   const pct = state.quotaBytes ? Math.min(100, (state.usedBytes / state.quotaBytes) * 100) : 0;
   ui.nav.replaceChildren(
     h('button', { class: 'btn btn-primary', onclick: () => openCompose('new') }, icon('plus'), 'New mail'),
     h('ul', { class: 'folders' }, items),
     h('div', { class: 'nav-footer' },
       h('button', { class: 'btn btn-ghost', onclick: createFolder }, icon('plus'), 'New folder'),
+      h('button', { class: 'btn btn-ghost', onclick: openSettings }, icon('gear'), 'Settings'),
       h('div', { class: 'quota' }, `${formatSize(state.usedBytes)} of ${formatSize(state.quotaBytes)} used`,
         h('div', { class: 'quota-bar' }, h('span', { style: `width:${pct}%` })))));
 }
 
 function selectFolder(name) {
   state.folder = name;
-  state.query = '';
+  state.navKey = name;
+  state.baseQuery = '';
+  applyQuery();
+}
+
+function selectNav(def) {
+  state.folder = def.folder;
+  state.navKey = def.key;
+  state.baseQuery = def.baseQuery;
+  applyQuery();
+}
+
+function applyQuery() {
+  state.userQuery = '';
   state.openUid = null;
   ui.nav.classList.remove('open');
   ui.shell.classList.remove('reading');
@@ -301,9 +379,50 @@ function folderMenu(anchor, f) {
   ]);
 }
 
+// ---------- labels & settings ----------
+let importantLabelReady = false;
+async function ensureImportantLabel() {
+  if (importantLabelReady) return;
+  try { await api('POST', '/api/mail/labels', { action: 'create', name: IMPORTANT_LABEL, color: '#e8710a' }); }
+  catch { /* already exists */ }
+  importantLabelReady = true;
+}
+
+async function openSettings() {
+  let data;
+  try { data = await api('GET', '/api/mail/settings'); } catch (e) { toast(e.message); return; }
+  const vac = data.vacation || {};
+  const sigInput = h('textarea', { rows: 5 }, data.signature || '');
+  const vacEnabled = h('input', { type: 'checkbox', checked: !!vac.enabled });
+  const vacSubject = h('input', { value: vac.subject || '' });
+  const vacBody = h('textarea', { rows: 5 }, vac.body || '');
+  const close = () => backdrop.remove();
+  const save = async () => {
+    try {
+      await api('POST', '/api/mail/settings', {
+        signature: sigInput.value,
+        vacation: { enabled: vacEnabled.checked, subject: vacSubject.value, body: vacBody.value, start: vac.start || 0, end: vac.end || 0 },
+      });
+      toast('Settings saved');
+      close();
+    } catch (e) { toast(e.message); }
+  };
+  const backdrop = h('div', { class: 'compose-backdrop', onkeydown: (e) => { if (e.key === 'Escape') close(); } },
+    h('div', { class: 'compose settings-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Settings' },
+      h('div', { class: 'compose-head' }, h('h2', {}, 'Settings'),
+        h('button', { class: 'btn btn-ghost', 'aria-label': 'Close', onclick: close }, icon('close'))),
+      h('div', { class: 'compose-row' }, h('label', {}, 'Signature'), sigInput),
+      h('div', { class: 'compose-row' }, h('label', {}, h('span', {}, vacEnabled, ' Vacation responder')),),
+      h('div', { class: 'compose-row' }, h('label', {}, 'Subject'), vacSubject),
+      h('div', { class: 'compose-row' }, h('label', {}, 'Message'), vacBody),
+      h('div', { class: 'compose-foot' }, h('button', { class: 'btn btn-primary', onclick: save }, 'Save'))));
+  document.body.append(backdrop);
+}
+
 // ---------- message list ----------
 async function loadMessages(reset = false, quiet = false) {
   if (reset) { state.offset = 0; state.selected.clear(); }
+  state.query = [state.baseQuery, state.userQuery].filter(Boolean).join(' ').trim();
   const q = new URLSearchParams({ folder: state.folder, offset: state.offset, limit: PAGE_SIZE });
   if (state.query) q.set('q', state.query);
   if (!quiet && reset) ui.list.replaceChildren(h('div', { class: 'empty' }, 'Loading…'));
@@ -328,16 +447,18 @@ function renderList() {
     tb('Move', 'move', (e) => moveMenu(e.currentTarget, sel), !sel.length),
     tb('Read', 'read', () => setFlags(sel, 'S', ''), !sel.length),
     tb('Unread', 'mail', () => setFlags(sel, '', 'S'), !sel.length),
-    tb('Flag', 'flag', () => setFlags(sel, 'F', ''), !sel.length),
+    tb('Star', 'star', () => setFlags(sel, 'F', ''), !sel.length),
+    tb('Important', 'important', () => toggleImportant(sel, true), !sel.length),
     isTrashLike ? tb('Empty', 'trash', emptyFolder, !state.total) : null,
     tb('Refresh', 'refresh', () => refreshAll()));
 
   const rows = state.messages.map(m => {
-    const fromList = parseAddresses(state.folder === 'Sent' || state.folder === 'Drafts' ? m.to : m.from);
-    const who = fromList.map(displayName).join(', ') || (state.folder === 'Drafts' ? '(no recipients)' : '(unknown)');
+    const fromList = parseAddresses(m.folder === 'Sent' || m.folder === 'Drafts' ? m.to : m.from);
+    const who = fromList.map(displayName).join(', ') || (m.folder === 'Drafts' ? '(no recipients)' : '(unknown)');
+    const important = (m.labels || []).some(l => l.toLowerCase() === IMPORTANT_LABEL);
     const li = h('li', {
       class: `msg${m.seen ? '' : ' unread'}${m.uid === state.openUid ? ' active' : ''}`, draggable: 'true',
-      onclick: (e) => { if (e.target.type !== 'checkbox') openMessage(m.uid); },
+      onclick: (e) => { if (e.target.type !== 'checkbox' && !e.target.closest('.star-btn')) openMessage(m.uid); },
       ondragstart: (e) => {
         const uids = state.selected.has(m.uid) ? [...state.selected] : [m.uid];
         e.dataTransfer.setData('application/x-uids', JSON.stringify(uids));
@@ -345,17 +466,20 @@ function renderList() {
     },
     h('input', { type: 'checkbox', 'aria-label': 'Select', checked: state.selected.has(m.uid),
       onchange: (e) => { e.target.checked ? state.selected.add(m.uid) : state.selected.delete(m.uid); renderList(); } }),
+    h('button', { class: `star-btn${m.flagged ? ' on' : ''}`, title: m.flagged ? 'Unstar' : 'Star', 'aria-label': 'Star',
+      onclick: (e) => { e.stopPropagation(); setFlags([m.uid], m.flagged ? '' : 'F', m.flagged ? 'F' : ''); } }, icon('star')),
     h('span', { class: 'who' }, who), h('span', { class: 'when' }, formatWhen(m.date, m.received)),
-    h('span', { class: 'subj' }, decode(m.subject) || '(no subject)'),
+    h('span', { class: 'subj' }, important ? h('span', { class: 'important-dot', title: 'Important' }, icon('important')) : null,
+      decode(m.subject) || '(no subject)'),
     h('span', { class: 'marks' }, m.attachment ? icon('clip') : null, m.answered ? icon('reply') : null,
-      m.flagged ? h('span', { class: 'flag' }, icon('flag')) : null));
+      m.snoozeUntil ? h('span', { class: 'flag', title: `Snoozed until ${new Date(m.snoozeUntil).toLocaleString()}` }, icon('snoozed')) : null));
     return li;
   });
 
   const pageEnd = Math.min(state.offset + state.messages.length, state.total);
   ui.list.replaceChildren(
     h('div', { class: 'list-head' }, allBox,
-      h('h2', {}, state.query ? `Search: ${state.query}` : folderLabel(state.folder))),
+      h('h2', {}, state.userQuery ? `Search: ${state.userQuery}` : navLabel())),
     toolbar,
     rows.length ? h('ul', { class: 'messages' }, rows)
       : h('div', { class: 'empty' }, state.query ? 'No messages match your search.' : 'This folder is empty.'),
@@ -370,20 +494,37 @@ function renderList() {
 
 async function setFlags(uids, add, remove) {
   try {
-    await api('POST', '/api/mail/flags', { folder: state.folder, uids, add, remove });
+    for (const [folder, groupUids] of groupByFolder(uids))
+      await api('POST', '/api/mail/flags', { folder, uids: groupUids, add, remove });
     await refreshAll(true);
+    await loadMessages();
+  } catch (e) { toast(e.message); }
+}
+
+async function toggleImportant(uids, makeImportant) {
+  try {
+    await ensureImportantLabel();
+    const items = uids.map(uid => {
+      const m = state.messages.find(x => x.uid === uid);
+      return { folder: m ? m.folder : state.folder, uid };
+    });
+    await api('POST', '/api/mail/labels', {
+      action: 'apply', items,
+      add: makeImportant ? [IMPORTANT_LABEL] : [], remove: makeImportant ? [] : [IMPORTANT_LABEL],
+    });
     await loadMessages();
   } catch (e) { toast(e.message); }
 }
 
 async function deleteMessages(uids) {
   if (!uids.length) return;
-  const permanent = state.folder === 'Trash';
+  const groups = groupByFolder(uids);
+  const permanent = [...groups.keys()].every(f => f === 'Trash');
   if (permanent && !confirm(`Permanently delete ${uids.length} message(s)?`)) return;
   try {
-    await api('POST', '/api/mail/delete', { folder: state.folder, uids });
+    for (const [folder, groupUids] of groups) await api('POST', '/api/mail/delete', { folder, uids: groupUids });
     if (uids.includes(state.openUid)) renderReaderPlaceholder();
-    toast(permanent ? 'Deleted permanently' : 'Moved to Deleted Items');
+    toast(permanent ? 'Deleted permanently' : 'Moved to Trash');
     state.selected.clear();
     await refreshAll(true);
     await loadMessages();
@@ -392,7 +533,10 @@ async function deleteMessages(uids) {
 
 async function moveTo(uids, to) {
   try {
-    await api('POST', '/api/mail/move', { folder: state.folder, uids, to });
+    for (const [folder, groupUids] of groupByFolder(uids)) {
+      if (folder === to) continue;
+      await api('POST', '/api/mail/move', { folder, uids: groupUids, to });
+    }
     if (uids.includes(state.openUid)) renderReaderPlaceholder();
     toast(`Moved to ${folderLabel(to)}`);
     state.selected.clear();
@@ -432,7 +576,9 @@ async function fetchParsed(folder, uid, peek = false) {
 }
 
 async function openMessage(uid) {
-  if (state.folder === 'Drafts') {
+  const meta = state.messages.find(m => m.uid === uid);
+  const folder = meta ? meta.folder : state.folder;
+  if (folder === 'Drafts') {
     try { openCompose('draft', { email: await fetchParsed('Drafts', uid, true), uid }); } catch (e) { toast(e.message); }
     return;
   }
@@ -440,11 +586,10 @@ async function openMessage(uid) {
   state.showImages = false;
   ui.shell.classList.add('reading');
   ui.read.replaceChildren(h('div', { class: 'placeholder' }, 'Loading…'));
-  const meta = state.messages.find(m => m.uid === uid);
   try {
-    const email = await fetchParsed(state.folder, uid);
+    const email = await fetchParsed(folder, uid);
     if (state.openUid !== uid) return;
-    renderReader(email, uid);
+    renderReader(email, uid, folder);
     if (meta && !meta.seen) { meta.seen = true; loadFolders().catch(() => {}); }
     renderList();
   } catch (e) {
@@ -458,7 +603,7 @@ function attachmentUrl(att) {
   return url;
 }
 
-function renderReader(email, uid) {
+function renderReader(email, uid, folder) {
   releaseBlobs();
   const from = email.from || {};
   const fromName = displayName(from);
@@ -479,9 +624,9 @@ function renderReader(email, uid) {
           h('div', { class: 'rcpt' }, email.date ? new Date(email.date).toLocaleString() : '')))),
     h('div', { class: 'reader-actions' },
       h('button', { class: 'btn btn-ghost back-btn', onclick: () => { ui.shell.classList.remove('reading'); renderReaderPlaceholder(); } }, icon('back'), 'Back'),
-      h('button', { class: 'btn', onclick: () => openCompose('reply', { email, uid }) }, icon('reply'), 'Reply'),
-      h('button', { class: 'btn', onclick: () => openCompose('replyAll', { email, uid }) }, icon('replyAll'), 'Reply all'),
-      h('button', { class: 'btn', onclick: () => openCompose('forward', { email, uid }) }, icon('forward'), 'Forward'),
+      h('button', { class: 'btn', onclick: () => openCompose('reply', { email, uid, folder }) }, icon('reply'), 'Reply'),
+      h('button', { class: 'btn', onclick: () => openCompose('replyAll', { email, uid, folder }) }, icon('replyAll'), 'Reply all'),
+      h('button', { class: 'btn', onclick: () => openCompose('forward', { email, uid, folder }) }, icon('forward'), 'Forward'),
       h('button', { class: 'btn btn-ghost', onclick: () => deleteMessages([uid]) }, icon('trash'), 'Delete'),
       h('button', { class: 'btn btn-ghost', onclick: (e) => moveMenu(e.currentTarget, [uid]) }, icon('move'), 'Move'),
       h('button', { class: 'btn btn-ghost', onclick: () => setFlags([uid], '', 'S') }, icon('mail'), 'Mark unread')),
@@ -495,7 +640,7 @@ function renderReader(email, uid) {
     const { html, hasRemote } = sanitizeHtml(email.html, cidMap, state.showImages);
     if (hasRemote && !state.showImages) {
       reader.insertBefore(h('div', { class: 'notice' }, 'Pictures from the internet are blocked to protect your privacy.',
-        h('button', { class: 'btn', onclick: () => { state.showImages = true; renderReader(email, uid); } }, 'Show pictures')), body);
+        h('button', { class: 'btn', onclick: () => { state.showImages = true; renderReader(email, uid, folder); } }, 'Show pictures')), body);
     }
     body.append(mailFrame(html, state.showImages));
   } else {
@@ -668,7 +813,7 @@ function openCompose(mode, ctx = {}) {
     draftUid,
     inReplyTo: mode.startsWith('reply') ? src.messageId || '' : '',
     references: mode.startsWith('reply') ? [src.references, src.messageId].filter(Boolean).join(' ') : '',
-    replyTo: mode.startsWith('reply') ? { folder: state.folder, uid: ctx.uid } : undefined,
+    replyTo: mode.startsWith('reply') ? { folder: ctx.folder || state.folder, uid: ctx.uid } : undefined,
   });
   const close = () => backdrop.remove();
   const sendBtn = h('button', { class: 'btn btn-primary', onclick: async () => {

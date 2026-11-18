@@ -110,6 +110,8 @@ public:
      */
     bool isOverSoftQuota(const QString& user) const;
 
+    QString basePath() const { return m_basePath; }
+
 private:
     QString userMaildirPath(const QString& user) const;
     int nextUid(const QString& userPath);
