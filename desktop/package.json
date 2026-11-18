@@ -1,7 +1,7 @@
 {
   "name": "bykiva-mail",
   "productName": "Bykiva Mail",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Desktop app for Bykiva Mail (mail.bykiva.com)",
   "author": "Bykiva <admin@bykiva.com>",
   "homepage": "https://mail.bykiva.com",
@@ -23,6 +23,9 @@
     },
     "files": [
       "main.js",
+      "preload.js",
+      "sidebar.html",
+      "sidebar.js",
       "offline.html",
       "build/icon.png"
     ],
