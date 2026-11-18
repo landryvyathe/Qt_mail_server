@@ -15,11 +15,27 @@
   <meta name="apple-mobile-web-app-title" content="Bykiva Mail">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="theme-color" content="#0f6cbd">
-  <link rel="stylesheet" href="app.css?v=20261119">
+  <link rel="stylesheet" href="app.css?v=20261120">
+  <!-- The mail parser is 14 small ES modules imported in a chain; preloading them fetches all in
+       parallel instead of one round trip per import level (seconds each on slow mobile links). -->
+  <link rel="modulepreload" href="vendor/postal-mime/postal-mime.js">
+  <link rel="modulepreload" href="vendor/postal-mime/mime-node.js">
+  <link rel="modulepreload" href="vendor/postal-mime/address-parser.js">
+  <link rel="modulepreload" href="vendor/postal-mime/decode-strings.js">
+  <link rel="modulepreload" href="vendor/postal-mime/base64-decoder.js">
+  <link rel="modulepreload" href="vendor/postal-mime/base64-encoder.js">
+  <link rel="modulepreload" href="vendor/postal-mime/boundary-stack.js">
+  <link rel="modulepreload" href="vendor/postal-mime/chunk-writer.js">
+  <link rel="modulepreload" href="vendor/postal-mime/errors.js">
+  <link rel="modulepreload" href="vendor/postal-mime/html-entities.js">
+  <link rel="modulepreload" href="vendor/postal-mime/otp-token.js">
+  <link rel="modulepreload" href="vendor/postal-mime/pass-through-decoder.js">
+  <link rel="modulepreload" href="vendor/postal-mime/qp-decoder.js">
+  <link rel="modulepreload" href="vendor/postal-mime/text-format.js">
 </head>
 <body>
   <div id="app" aria-live="polite"></div>
   <div id="toast" role="status" hidden></div>
-  <script type="module" src="app.js?v=20261119"></script>
+  <script type="module" src="app.js?v=20261120"></script>
 </body>
 </html>

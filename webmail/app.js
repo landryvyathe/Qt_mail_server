@@ -21,6 +21,7 @@ const state = {
   messages: [], total: 0, offset: 0, query: '',
   selected: new Set(), openUid: null, showImages: false, blobUrls: [],
 };
+let uidToThread = new Map();
 
 // ---------- tiny DOM helpers ----------
 function h(tag, attrs = {}, ...children) {
@@ -133,6 +134,37 @@ function navLabel() {
 }
 // Messages can come from mixed real folders when viewing All Mail/Starred/Important;
 // group by each message's own folder so bulk actions hit the right IMAP mailbox.
+// Groups messages into conversation threads by walking the Message-ID/In-Reply-To/References
+// chain with a union-find; messages are joined into one thread when either references the other.
+function buildThreads(messages) {
+  const parent = new Map();
+  const find = (id) => {
+    if (!parent.has(id)) parent.set(id, id);
+    let root = id;
+    while (parent.get(root) !== root) root = parent.get(root);
+    parent.set(id, root);
+    return root;
+  };
+  const union = (a, b) => {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  const idOf = (m) => m.messageId || `uid:${m.folder}:${m.uid}`;
+  for (const m of messages) {
+    const id = idOf(m);
+    find(id);
+    const refs = [...((m.references || '').match(/<[^>]+>/g) || []), ...((m.inReplyTo || '').match(/<[^>]+>/g) || [])];
+    for (const r of refs) union(id, r);
+  }
+  const groups = new Map();
+  for (const m of messages) {
+    const root = find(idOf(m));
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(m);
+  }
+  return [...groups.values()];
+}
+
 function groupByFolder(uids) {
   const groups = new Map();
   for (const uid of uids) {
@@ -452,27 +484,39 @@ function renderList() {
     isTrashLike ? tb('Empty', 'trash', emptyFolder, !state.total) : null,
     tb('Refresh', 'refresh', () => refreshAll()));
 
-  const rows = state.messages.map(m => {
-    const fromList = parseAddresses(m.folder === 'Sent' || m.folder === 'Drafts' ? m.to : m.from);
-    const who = fromList.map(displayName).join(', ') || (m.folder === 'Drafts' ? '(no recipients)' : '(unknown)');
-    const important = (m.labels || []).some(l => l.toLowerCase() === IMPORTANT_LABEL);
+  // One row per thread; state.messages is already date-desc sorted, so the first message of a
+  // thread we encounter is always its most recent, which keeps thread rows in the right order.
+  const threads = buildThreads(state.messages);
+  uidToThread = new Map();
+  for (const group of threads) for (const m of group) uidToThread.set(m.uid, group);
+
+  const rows = threads.map(group => {
+    const latest = group.reduce((a, b) => (a.received >= b.received ? a : b));
+    const uids = group.map(g => g.uid);
+    const fromList = parseAddresses(latest.folder === 'Sent' || latest.folder === 'Drafts' ? latest.to : latest.from);
+    const who = fromList.map(displayName).join(', ') || (latest.folder === 'Drafts' ? '(no recipients)' : '(unknown)');
+    const important = group.some(m => (m.labels || []).some(l => l.toLowerCase() === IMPORTANT_LABEL));
+    const unread = group.some(m => !m.seen);
+    const flagged = group.some(m => m.flagged);
+    const allSelected = uids.every(u => state.selected.has(u));
     const li = h('li', {
-      class: `msg${m.seen ? '' : ' unread'}${m.uid === state.openUid ? ' active' : ''}`, draggable: 'true',
-      onclick: (e) => { if (e.target.type !== 'checkbox' && !e.target.closest('.star-btn')) openMessage(m.uid); },
+      class: `msg${unread ? ' unread' : ''}${uids.includes(state.openUid) ? ' active' : ''}`, draggable: 'true',
+      onclick: (e) => { if (e.target.type !== 'checkbox' && !e.target.closest('.star-btn')) openMessage(latest.uid); },
       ondragstart: (e) => {
-        const uids = state.selected.has(m.uid) ? [...state.selected] : [m.uid];
-        e.dataTransfer.setData('application/x-uids', JSON.stringify(uids));
+        const dragUids = state.selected.has(latest.uid) ? [...state.selected] : uids;
+        e.dataTransfer.setData('application/x-uids', JSON.stringify(dragUids));
       },
     },
-    h('input', { type: 'checkbox', 'aria-label': 'Select', checked: state.selected.has(m.uid),
-      onchange: (e) => { e.target.checked ? state.selected.add(m.uid) : state.selected.delete(m.uid); renderList(); } }),
-    h('button', { class: `star-btn${m.flagged ? ' on' : ''}`, title: m.flagged ? 'Unstar' : 'Star', 'aria-label': 'Star',
-      onclick: (e) => { e.stopPropagation(); setFlags([m.uid], m.flagged ? '' : 'F', m.flagged ? 'F' : ''); } }, icon('star')),
-    h('span', { class: 'who' }, who), h('span', { class: 'when' }, formatWhen(m.date, m.received)),
+    h('input', { type: 'checkbox', 'aria-label': 'Select', checked: allSelected,
+      onchange: (e) => { uids.forEach(u => (e.target.checked ? state.selected.add(u) : state.selected.delete(u))); renderList(); } }),
+    h('button', { class: `star-btn${flagged ? ' on' : ''}`, title: flagged ? 'Unstar' : 'Star', 'aria-label': 'Star',
+      onclick: (e) => { e.stopPropagation(); setFlags(uids, flagged ? '' : 'F', flagged ? 'F' : ''); } }, icon('star')),
+    h('span', { class: 'who' }, who, group.length > 1 ? h('span', { class: 'thread-count' }, ` (${group.length})`) : null),
+    h('span', { class: 'when' }, formatWhen(latest.date, latest.received)),
     h('span', { class: 'subj' }, important ? h('span', { class: 'important-dot', title: 'Important' }, icon('important')) : null,
-      decode(m.subject) || '(no subject)'),
-    h('span', { class: 'marks' }, m.attachment ? icon('clip') : null, m.answered ? icon('reply') : null,
-      m.snoozeUntil ? h('span', { class: 'flag', title: `Snoozed until ${new Date(m.snoozeUntil).toLocaleString()}` }, icon('snoozed')) : null));
+      decode(latest.subject) || '(no subject)'),
+    h('span', { class: 'marks' }, group.some(m => m.attachment) ? icon('clip') : null, latest.answered ? icon('reply') : null,
+      latest.snoozeUntil ? h('span', { class: 'flag', title: `Snoozed until ${new Date(latest.snoozeUntil).toLocaleString()}` }, icon('snoozed')) : null));
     return li;
   });
 
@@ -577,24 +621,70 @@ async function fetchParsed(folder, uid, peek = false) {
 
 async function openMessage(uid) {
   const meta = state.messages.find(m => m.uid === uid);
-  const folder = meta ? meta.folder : state.folder;
-  if (folder === 'Drafts') {
+  if (!meta) return;
+  if (meta.folder === 'Drafts') {
     try { openCompose('draft', { email: await fetchParsed('Drafts', uid, true), uid }); } catch (e) { toast(e.message); }
     return;
   }
+  const group = uidToThread.get(uid) || [meta];
   state.openUid = uid;
   state.showImages = false;
   ui.shell.classList.add('reading');
   ui.read.replaceChildren(h('div', { class: 'placeholder' }, 'Loading…'));
-  try {
-    const email = await fetchParsed(folder, uid);
-    if (state.openUid !== uid) return;
-    renderReader(email, uid, folder);
-    if (meta && !meta.seen) { meta.seen = true; loadFolders().catch(() => {}); }
-    renderList();
-  } catch (e) {
-    ui.read.replaceChildren(h('div', { class: 'placeholder' }, `Could not open this message: ${e.message}`));
+  if (group.length <= 1) {
+    try {
+      const email = await fetchParsed(meta.folder, uid);
+      if (state.openUid !== uid) return;
+      renderReader(email, uid, meta.folder);
+      if (!meta.seen) { meta.seen = true; loadFolders().catch(() => {}); }
+      renderList();
+    } catch (e) {
+      ui.read.replaceChildren(h('div', { class: 'placeholder' }, `Could not open this message: ${e.message}`));
+    }
+    return;
   }
+  openThread(group, uid);
+}
+
+// Gmail-style conversation view: every message in the thread gets a collapsed summary row,
+// with the newest message and any unread ones pre-expanded; others load lazily on click.
+function openThread(group, focusUid) {
+  releaseBlobs();
+  const sorted = [...group].sort((a, b) => a.received - b.received);
+  const container = h('div', { class: 'thread' },
+    h('div', { class: 'reader-actions thread-back' },
+      h('button', { class: 'btn btn-ghost back-btn',
+        onclick: () => { ui.shell.classList.remove('reading'); renderReaderPlaceholder(); } }, icon('back'), 'Back'),
+      h('h1', { class: 'thread-subject' }, decode(sorted[sorted.length - 1].subject) || '(no subject)')));
+  ui.read.replaceChildren(container);
+  for (const m of sorted) container.append(threadItem(m, m === sorted[sorted.length - 1] || !m.seen));
+}
+
+function threadItem(m, expand) {
+  const who = parseAddresses(m.from).map(displayName).join(', ') || '(unknown)';
+  const wrap = h('div', { class: 'thread-item' });
+  const mount = h('div', { class: 'thread-body' });
+  const summary = h('div', { class: 'thread-summary', onclick: () => expandItem() },
+    h('span', { class: 'avatar', style: `background:${avatarColor(m.from)}` }, initials(who)),
+    h('span', { class: 'who' }, who),
+    h('span', { class: 'snippet' }, formatWhen(m.date, m.received)));
+  wrap.append(summary, mount);
+  let loaded = false;
+  async function expandItem() {
+    wrap.classList.add('expanded');
+    if (loaded) return;
+    loaded = true;
+    mount.replaceChildren(h('div', { class: 'placeholder' }, 'Loading…'));
+    try {
+      const email = await fetchParsed(m.folder, m.uid);
+      renderReader(email, m.uid, m.folder, { mount });
+      if (!m.seen) { m.seen = true; loadFolders().catch(() => {}); renderList(); }
+    } catch (e) {
+      mount.replaceChildren(h('div', {}, `Could not load this message: ${e.message}`));
+    }
+  }
+  if (expand) expandItem();
+  return wrap;
 }
 
 function attachmentUrl(att) {
@@ -603,8 +693,8 @@ function attachmentUrl(att) {
   return url;
 }
 
-function renderReader(email, uid, folder) {
-  releaseBlobs();
+function renderReader(email, uid, folder, { mount } = {}) {
+  if (!mount) releaseBlobs();
   const from = email.from || {};
   const fromName = displayName(from);
   const files = email.attachments.filter(a => a.disposition !== 'inline' || !a.contentId);
@@ -623,7 +713,8 @@ function renderReader(email, uid, folder) {
           email.cc && email.cc.length ? h('div', { class: 'rcpt' }, `Cc: ${addrText(email.cc)}`) : null,
           h('div', { class: 'rcpt' }, email.date ? new Date(email.date).toLocaleString() : '')))),
     h('div', { class: 'reader-actions' },
-      h('button', { class: 'btn btn-ghost back-btn', onclick: () => { ui.shell.classList.remove('reading'); renderReaderPlaceholder(); } }, icon('back'), 'Back'),
+      mount ? null : h('button', { class: 'btn btn-ghost back-btn',
+        onclick: () => { ui.shell.classList.remove('reading'); renderReaderPlaceholder(); } }, icon('back'), 'Back'),
       h('button', { class: 'btn', onclick: () => openCompose('reply', { email, uid, folder }) }, icon('reply'), 'Reply'),
       h('button', { class: 'btn', onclick: () => openCompose('replyAll', { email, uid, folder }) }, icon('replyAll'), 'Reply all'),
       h('button', { class: 'btn', onclick: () => openCompose('forward', { email, uid, folder }) }, icon('forward'), 'Forward'),
@@ -634,13 +725,13 @@ function renderReader(email, uid, folder) {
     files.length ? h('div', { class: 'attachments' }, files.map(a => h('a', {
       class: 'att', href: attachmentUrl(a), download: a.filename || 'attachment', title: a.filename || 'attachment',
     }, icon('clip'), h('span', {}, a.filename || 'attachment'), h('small', {}, formatSize(a.content.byteLength || 0))))) : null);
-  ui.read.replaceChildren(reader);
+  (mount || ui.read).replaceChildren(reader);
 
   if (email.html) {
     const { html, hasRemote } = sanitizeHtml(email.html, cidMap, state.showImages);
     if (hasRemote && !state.showImages) {
       reader.insertBefore(h('div', { class: 'notice' }, 'Pictures from the internet are blocked to protect your privacy.',
-        h('button', { class: 'btn', onclick: () => { state.showImages = true; renderReader(email, uid, folder); } }, 'Show pictures')), body);
+        h('button', { class: 'btn', onclick: () => { state.showImages = true; renderReader(email, uid, folder, { mount }); } }, 'Show pictures')), body);
     }
     body.append(mailFrame(html, state.showImages));
   } else {
