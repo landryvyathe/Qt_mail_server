@@ -86,6 +86,11 @@ public:
     bool mailboxExists(const QString& user, const QString& mailbox) const;
 
     /**
+     * Per-mailbox UIDVALIDITY, created on first use and persisted in ".uidvalidity".
+     */
+    quint32 uidValidity(const QString& user);
+
+    /**
      * User quota usage in bytes.
      */
     qint64 usageBytes(const QString& user) const;

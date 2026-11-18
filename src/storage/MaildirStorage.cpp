@@ -280,6 +280,20 @@ QStringList MaildirStorage::listMailboxes(const QString& user) const {
     return out;
 }
 
+quint32 MaildirStorage::uidValidity(const QString& user) {
+    const QString userPath = userMaildirPath(user);
+    ensureDir(userPath);
+    QFile file(userPath + "/.uidvalidity");
+    if (file.open(QIODevice::ReadOnly)) {
+        const quint32 stored = file.readAll().trimmed().toUInt();
+        if (stored > 0) return stored;
+        file.close();
+    }
+    const quint32 value = static_cast<quint32>(QDateTime::currentSecsSinceEpoch());
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) file.write(QByteArray::number(value));
+    return value;
+}
+
 bool MaildirStorage::mailboxExists(const QString& user, const QString& mailbox) const {
     return QDir(userMaildirPath(user) + "/." + mailbox + "/cur").exists();
 }

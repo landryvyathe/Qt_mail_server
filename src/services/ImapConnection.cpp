@@ -398,7 +398,7 @@ void ImapConnection::statusMailbox(const QString& tag, const QString& args) {
     if (wanted.contains("MESSAGES")) items << QString("MESSAGES %1").arg(msgs.size());
     if (wanted.contains("RECENT")) items << "RECENT 0";
     if (wanted.contains("UIDNEXT")) items << QString("UIDNEXT %1").arg(top + 1);
-    if (wanted.contains("UIDVALIDITY")) items << "UIDVALIDITY 1";
+    if (wanted.contains("UIDVALIDITY")) items << QString("UIDVALIDITY %1").arg(m_storage->uidValidity(storeKey(name)));
     if (wanted.contains("UNSEEN")) items << QString("UNSEEN %1").arg(unseen);
     sendUntagged(QString("STATUS %1 (%2)").arg(QString::fromUtf8(ImapMime::nstring(name.toUtf8())),
                                                items.join(' ')));
@@ -454,7 +454,7 @@ void ImapConnection::selectMailbox(const QString& tag, const QString& cmd, const
     sendUntagged(QString("%1 EXISTS").arg(m_session.messages.size()));
     sendUntagged("0 RECENT");
     if (firstUnseen) sendUntagged(QString("OK [UNSEEN %1] First unseen").arg(firstUnseen));
-    sendUntagged("OK [UIDVALIDITY 1] UIDs valid");
+    sendUntagged(QString("OK [UIDVALIDITY %1] UIDs valid").arg(m_storage->uidValidity(storeKey(name))));
     sendUntagged(QString("OK [UIDNEXT %1] Predicted next UID").arg(maxUid() + 1));
     sendTagged(tag, "OK", QString("[%1] %2 completed")
                               .arg(m_session.readOnly ? "READ-ONLY" : "READ-WRITE", cmd));
