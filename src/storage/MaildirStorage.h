@@ -44,6 +44,11 @@ public:
     MailEntry loadMessage(const QString& user, int uid);
 
     /**
+     * Read only the header block of a message (up to maxBytes), for list views.
+     */
+    QByteArray loadHeader(const QString& user, int uid, qint64 maxBytes = 65536);
+
+    /**
      * Mark a message as seen.
      */
     bool markSeen(const QString& user, int uid);

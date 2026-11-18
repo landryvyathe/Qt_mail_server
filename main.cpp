@@ -202,6 +202,7 @@ int main(int argc, char* argv[]) {
 
     // --- API ---
     ApiServer* apiServer = new ApiServer(config);
+    apiServer->setWebmailServices({&storage, &authManager, &queueMgr});
     apiServer->start();
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [apiServer]() {
         apiServer->stop();

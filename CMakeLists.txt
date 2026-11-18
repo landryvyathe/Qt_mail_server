@@ -30,6 +30,7 @@ set(SOURCES
     src/filters/SpamFilter.cpp
     src/parser/MimeParser.cpp
     src/api/ApiServer.cpp
+    src/api/WebmailApi.cpp
     src/systemd/ServiceNotifier.cpp
     src/services/SmtpServer.cpp
     src/services/SmtpConnection.cpp
@@ -52,6 +53,7 @@ set(HEADERS
     src/filters/SpamFilter.h
     src/parser/MimeParser.h
     src/api/ApiServer.h
+    src/api/WebmailApi.h
     src/systemd/ServiceNotifier.h
     src/utils/RateLimiter.h
     src/services/SmtpServer.h

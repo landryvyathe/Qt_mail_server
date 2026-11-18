@@ -157,6 +157,18 @@ QList<MailEntry> MaildirStorage::listMessages(const QString& user) {
 // ---------------------------------------------------------------------------
 // Load
 // ---------------------------------------------------------------------------
+QByteArray MaildirStorage::loadHeader(const QString& user, int uid, qint64 maxBytes) {
+    QFile file(uidToFile(userMaildirPath(user), uid));
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    QByteArray header;
+    while (!file.atEnd() && header.size() < maxBytes) {
+        const QByteArray line = file.readLine(8192);
+        if (line == "\r\n" || line == "\n") break;
+        header += line;
+    }
+    return header;
+}
+
 MailEntry MaildirStorage::loadMessage(const QString& user, int uid) {
     MailEntry e;
     QString userPath = userMaildirPath(user);

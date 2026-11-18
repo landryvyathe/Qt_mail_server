@@ -1037,6 +1037,26 @@ bool ApiServer::start() {
             res.set_redirect("/admin");
         });
 
+        // --- Webmail: user API + static UI ---
+        if (m_webmailServices.isValid()) {
+            m_webmail = std::make_unique<WebmailApi>(m_config, m_webmailServices);
+            m_webmail->registerRoutes(*m_server);
+            // Base64 attachments inflate 25 MB of mail to ~34 MB of JSON.
+            m_server->set_payload_max_length(40 * 1024 * 1024);
+
+            const QStringList webmailDirs = {QDir::currentPath() + "/webmail",
+                                             QDir::currentPath() + "/../webmail"};
+            for (const QString& dir : webmailDirs) {
+                if (QDir(dir).exists() && m_server->set_mount_point("/webmail", dir.toStdString())) {
+                    qInfo() << "ApiServer: webmail UI served from" << dir;
+                    break;
+                }
+            }
+            m_server->Get("/webmail", [](const httplib::Request&, httplib::Response& res) {
+                res.set_redirect("/webmail/");
+            });
+        }
+
         // Set global error handler (only for truly unmatched routes)
         m_server->set_error_handler([&](const httplib::Request& req, httplib::Response& res) {
             Q_UNUSED(req);

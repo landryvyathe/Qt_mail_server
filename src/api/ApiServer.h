@@ -11,6 +11,7 @@ namespace httplib {
 }
 
 class ConfigManager;
+#include "WebmailApi.h"
 
 class ApiServer : public QObject {
     Q_OBJECT
@@ -20,6 +21,8 @@ public:
 
     bool start();
     void stop();
+    // Enables the user-facing webmail API and static UI; call before start().
+    void setWebmailServices(const WebmailServices& services) { m_webmailServices = services; }
 
 private:
     const ConfigManager& m_config;
@@ -29,6 +32,8 @@ private:
     QThread*  m_thread    = nullptr;
     bool      m_stopFlag   = false;
     int       m_port       = 0;
+    WebmailServices m_webmailServices;
+    std::unique_ptr<WebmailApi> m_webmail;
 };
 
 #endif // APISERVER_H
