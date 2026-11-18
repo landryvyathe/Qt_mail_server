@@ -88,7 +88,11 @@ void SmtpConnection::run() {
                     m_socket->disconnectFromHost();
                     break;
                 }
-                QString line = QString::fromUtf8(rawLine).trimmed();
+                // Message data must stay byte-exact: leading whitespace marks folded headers.
+                QByteArray dataLine = rawLine;
+                while (dataLine.endsWith('\n') || dataLine.endsWith('\r')) dataLine.chop(1);
+                QString line = m_state == DATA_BODY ? QString::fromLatin1(dataLine)
+                                                    : QString::fromUtf8(rawLine).trimmed();
                 if (m_state == DATA_BODY) {
                     if (line == ".") {
                         // End of DATA – separate local vs remote recipients
@@ -133,8 +137,8 @@ void SmtpConnection::run() {
                         m_recipients.clear();
                         m_messageData.clear();
                     } else {
-                        if (line.startsWith("..")) line.remove(0, 1);
-                        m_messageData.append(line.toUtf8() + "\r\n");
+                        if (dataLine.startsWith('.')) dataLine.remove(0, 1);
+                        m_messageData.append(dataLine + "\r\n");
                     }
                 } else {
                     handleCommand(line);

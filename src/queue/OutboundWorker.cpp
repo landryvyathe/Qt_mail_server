@@ -407,18 +407,27 @@ OutboundWorker::SmtpDeliveryResult OutboundWorker::deliverViaRelay(OutboundEmail
     }
 
     // AUTH if credentials provided (some relays like Alibaba require auth but don't advertise it)
-    if (!m_relay.username.isEmpty() && !m_relay.password.isEmpty()) {
-        qInfo() << "OutboundWorker: authenticating to relay as" << m_relay.username;
+    // Alibaba DirectMail only lets an account send as itself: log in as the sender when its
+    // domain has an SMTP password configured, otherwise fall back to the shared relay account.
+    QString authUser = m_relay.username;
+    QString authPass = m_relay.password;
+    const QString senderDomain = email.envelopeFrom.section('@', 1).trimmed().toLower();
+    if (m_relay.senderPasswords.contains(senderDomain)) {
+        authUser = email.envelopeFrom.trimmed().toLower();
+        authPass = m_relay.senderPasswords.value(senderDomain);
+    }
+    if (!authUser.isEmpty() && !authPass.isEmpty()) {
+        qInfo() << "OutboundWorker: authenticating to relay as" << authUser;
         {
             QString authMethod = m_relay.authMethod;
             if (authMethod == "PLAIN") {
-                if (!smtpAuthPlain(&socket, code, text)) {
+                if (!smtpAuthPlain(&socket, authUser, authPass, code, text)) {
                     result.errorText = QStringLiteral("AUTH PLAIN failed: ") + text;
                     result.temporary = false;
                     return result;
                 }
             } else if (authMethod == "LOGIN") {
-                if (!smtpAuthLogin(&socket, code, text)) {
+                if (!smtpAuthLogin(&socket, authUser, authPass, code, text)) {
                     result.errorText = QStringLiteral("AUTH LOGIN failed: ") + text;
                     result.temporary = false;
                     return result;
@@ -491,17 +500,18 @@ OutboundWorker::SmtpDeliveryResult OutboundWorker::deliverViaRelay(OutboundEmail
 // ---------------------------------------------------------------------------
 // SMTP AUTH LOGIN
 // ---------------------------------------------------------------------------
-bool OutboundWorker::smtpAuthLogin(QSslSocket* s, int& code, QString& text) {
+bool OutboundWorker::smtpAuthLogin(QSslSocket* s, const QString& user, const QString& pass,
+                                   int& code, QString& text) {
     if (!smtpSendCommand(s, QByteArray("AUTH LOGIN\r\n"), 334, code, text)) {
         return false;
     }
 
-    QByteArray usernameB64 = m_relay.username.toLatin1().toBase64();
+    QByteArray usernameB64 = user.toLatin1().toBase64();
     if (!smtpSendCommand(s, usernameB64 + "\r\n", 334, code, text)) {
         return false;
     }
 
-    QByteArray passwordB64 = m_relay.password.toLatin1().toBase64();
+    QByteArray passwordB64 = pass.toLatin1().toBase64();
     if (!smtpSendCommand(s, passwordB64 + "\r\n", 235, code, text)) {
         return false;
     }
@@ -512,13 +522,14 @@ bool OutboundWorker::smtpAuthLogin(QSslSocket* s, int& code, QString& text) {
 // ---------------------------------------------------------------------------
 // SMTP AUTH PLAIN
 // ---------------------------------------------------------------------------
-bool OutboundWorker::smtpAuthPlain(QSslSocket* s, int& code, QString& text) {
+bool OutboundWorker::smtpAuthPlain(QSslSocket* s, const QString& user, const QString& pass,
+                                   int& code, QString& text) {
     // base64(\0 username \0 password)
     QByteArray auth;
     auth.append('\0');
-    auth.append(m_relay.username.toLatin1());
+    auth.append(user.toLatin1());
     auth.append('\0');
-    auth.append(m_relay.password.toLatin1());
+    auth.append(pass.toLatin1());
 
     QByteArray cmd = "AUTH PLAIN " + auth.toBase64() + "\r\n";
     return smtpSendCommand(s, cmd, 235, code, text);

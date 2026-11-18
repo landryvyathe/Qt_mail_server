@@ -47,8 +47,8 @@ private:
     bool smtpSendCommand(QSslSocket* s, const QByteArray& cmd, int expectedCode, int& code, QString& text);
 
     // -- AUTH helpers --
-    bool smtpAuthLogin(QSslSocket* s, int& code, QString& text);
-    bool smtpAuthPlain(QSslSocket* s, int& code, QString& text);
+    bool smtpAuthLogin(QSslSocket* s, const QString& user, const QString& pass, int& code, QString& text);
+    bool smtpAuthPlain(QSslSocket* s, const QString& user, const QString& pass, int& code, QString& text);
 
     // -- Queue management --
     void loadPendingFromDisk();
