@@ -407,13 +407,18 @@ OutboundWorker::SmtpDeliveryResult OutboundWorker::deliverViaRelay(OutboundEmail
     }
 
     // AUTH if credentials provided (some relays like Alibaba require auth but don't advertise it)
-    // Alibaba DirectMail only lets an account send as itself: log in as the sender when its
-    // domain has an SMTP password configured, otherwise fall back to the shared relay account.
+    // Alibaba DirectMail only lets an account send as itself: log in as the sender when it (or
+    // its domain) has an SMTP password configured, otherwise fall back to the shared relay account.
+    // A per-address entry takes priority since DirectMail registers senders individually.
     QString authUser = m_relay.username;
     QString authPass = m_relay.password;
-    const QString senderDomain = email.envelopeFrom.section('@', 1).trimmed().toLower();
-    if (m_relay.senderPasswords.contains(senderDomain)) {
-        authUser = email.envelopeFrom.trimmed().toLower();
+    const QString senderAddress = email.envelopeFrom.trimmed().toLower();
+    const QString senderDomain = senderAddress.section('@', 1);
+    if (m_relay.senderPasswords.contains(senderAddress)) {
+        authUser = senderAddress;
+        authPass = m_relay.senderPasswords.value(senderAddress);
+    } else if (m_relay.senderPasswords.contains(senderDomain)) {
+        authUser = senderAddress;
         authPass = m_relay.senderPasswords.value(senderDomain);
     }
     if (!authUser.isEmpty() && !authPass.isEmpty()) {
