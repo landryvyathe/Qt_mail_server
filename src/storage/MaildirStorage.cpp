@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QDateTime>
 #include <QDebug>
+#include <algorithm>
 
 MaildirStorage::MaildirStorage() :
     m_basePath("./maildir"),
@@ -34,6 +35,11 @@ QDir MaildirStorage::ensureDir(const QString& path) {
     return d;
 }
 
+static QString maildirFlags(const QString& fileName) {
+    const int idx = fileName.indexOf(":2,");
+    return idx >= 0 ? fileName.mid(idx + 3) : QString();
+}
+
 QString MaildirStorage::userMaildirPath(const QString& user) const {
     return m_basePath + "/" + user;
 }
@@ -43,7 +49,7 @@ int MaildirStorage::nextUid(const QString& userPath) {
     QDir nw(userPath + "/new");
     int maxUid = 0;
     auto scan = [&](const QDir& d) {
-        QStringList files = d.entryList({"*.mailserver"}, QDir::Files);
+        QStringList files = d.entryList({"*.mailserver*"}, QDir::Files);
         for (const QString& f : files) {
             bool ok;
             int uid = f.section('.', 0, 0).toInt(&ok);
@@ -52,14 +58,24 @@ int MaildirStorage::nextUid(const QString& userPath) {
     };
     if (cur.exists()) scan(cur);
     if (nw.exists()) scan(nw);
-    return maxUid + 1;
+
+    // UIDs must never be reused after an expunge (RFC 3501), so persist the high-water mark.
+    QFile marker(userPath + "/.uidnext");
+    int next = maxUid + 1;
+    if (marker.open(QIODevice::ReadOnly)) {
+        next = std::max(next, marker.readAll().trimmed().toInt());
+        marker.close();
+    }
+    if (marker.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        marker.write(QByteArray::number(next + 1));
+    return next;
 }
 
 QString MaildirStorage::uidToFile(const QString& userPath, int uid) const {
     // search in cur/ and new/
     QDir cur(userPath + "/cur");
     QDir nw(userPath + "/new");
-    QString pat = QString::number(uid) + ".*.mailserver";
+    QString pat = QString::number(uid) + ".*.mailserver*";
     QStringList found = cur.entryList({pat}, QDir::Files);
     if (!found.isEmpty()) return cur.filePath(found.first());
     found = nw.entryList({pat}, QDir::Files);
@@ -118,17 +134,17 @@ QList<MailEntry> MaildirStorage::listMessages(const QString& user) {
 
     auto scanDir = [&](const QDir& dir, bool isNew) {
         if (!dir.exists()) return;
-        QFileInfoList files = dir.entryInfoList({"*.mailserver"}, QDir::Files);
+        QFileInfoList files = dir.entryInfoList({"*.mailserver*"}, QDir::Files);
         for (const QFileInfo& fi : files) {
             MailEntry e;
             e.fileName = fi.fileName();
             e.uid      = fileToUid(fi.fileName());
             e.size     = fi.size();
             e.date     = fi.lastModified();
-            e.seen     = !fi.fileName().endsWith(":2,") && fi.fileName().contains("S");
-            e.seen     = isNew ? false : e.seen; // new/ = not seen
-            e.flagged  = fi.fileName().contains("F");
-            e.deleted_ = fi.fileName().contains("T");
+            const QString flags = maildirFlags(fi.fileName());
+            e.seen     = !isNew && flags.contains('S');
+            e.flagged  = flags.contains('F');
+            e.deleted_ = flags.contains('T');
             list.append(e);
         }
     };
@@ -155,9 +171,10 @@ MailEntry MaildirStorage::loadMessage(const QString& user, int uid) {
     e.uid      = uid;
     e.size     = fi.size();
     e.date     = fi.lastModified();
-    e.seen     = fi.fileName().contains("S");
-    e.flagged  = fi.fileName().contains("F");
-    e.deleted_ = fi.fileName().contains("T");
+    const QString flags = maildirFlags(fi.fileName());
+    e.seen     = flags.contains('S');
+    e.flagged  = flags.contains('F');
+    e.deleted_ = flags.contains('T');
     e.rawMessage = file.readAll();
     file.close();
     return e;
@@ -178,7 +195,7 @@ bool MaildirStorage::markSeen(const QString& user, int uid) {
     // set S flag
     QString newName = base;
     if (!newName.contains(":2,")) newName += ":2,";
-    if (!newName.contains('S')) newName += 'S';
+    if (!maildirFlags(newName).contains('S')) newName += 'S';
     QString newPath = dir + newName;
 
     if (oldPath == newPath) return true;
@@ -214,6 +231,24 @@ bool MaildirStorage::markFlagged(const QString& user, int uid, bool flagged) {
     return QFile::rename(oldPath, newPath);
 }
 
+bool MaildirStorage::setFlags(const QString& user, int uid, const QString& flags) {
+    const QString userPath = userMaildirPath(user);
+    const QString oldPath  = uidToFile(userPath, uid);
+    if (oldPath.isEmpty()) return false;
+
+    QString sorted;
+    for (QChar c : QStringLiteral("DFRST"))
+        if (flags.contains(c)) sorted += c;
+
+    QString base = QFileInfo(oldPath).fileName();
+    const int idx = base.indexOf(":2,");
+    if (idx >= 0) base = base.left(idx);
+    const QString newPath = userPath + "/cur/" + base + ":2," + sorted;
+    if (oldPath == newPath) return true;
+    ensureDir(userPath + "/cur");
+    return QFile::rename(oldPath, newPath);
+}
+
 // ---------------------------------------------------------------------------
 // Delete
 // ---------------------------------------------------------------------------
@@ -234,6 +269,39 @@ bool MaildirStorage::createMailbox(const QString& user, const QString& mailbox) 
            ensureDir(folderPath + "/tmp").exists();
 }
 
+QStringList MaildirStorage::listMailboxes(const QString& user) const {
+    QStringList out;
+    const QDir dir(userMaildirPath(user));
+    for (const QString& d : dir.entryList(QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot)) {
+        if (d.startsWith('.') && d.size() > 1 && QDir(dir.filePath(d) + "/cur").exists())
+            out << d.mid(1);
+    }
+    out.sort(Qt::CaseInsensitive);
+    return out;
+}
+
+bool MaildirStorage::mailboxExists(const QString& user, const QString& mailbox) const {
+    return QDir(userMaildirPath(user) + "/." + mailbox + "/cur").exists();
+}
+
+bool MaildirStorage::deleteMailbox(const QString& user, const QString& mailbox) {
+    if (mailbox.isEmpty() || !mailboxExists(user, mailbox)) return false;
+    return QDir(userMaildirPath(user) + "/." + mailbox).removeRecursively();
+}
+
+bool MaildirStorage::renameMailbox(const QString& user, const QString& from, const QString& to) {
+    if (from.isEmpty() || to.isEmpty() || !mailboxExists(user, from) || mailboxExists(user, to))
+        return false;
+    const QString base = userMaildirPath(user);
+    const QStringList all = listMailboxes(user);
+    for (const QString& name : all) {
+        if (name != from && !name.startsWith(from + '.')) continue;
+        const QString target = to + name.mid(from.size());
+        if (!QDir().rename(base + "/." + name, base + "/." + target)) return false;
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Quota
 // ---------------------------------------------------------------------------
@@ -248,6 +316,10 @@ qint64 MaildirStorage::usageBytes(const QString& user) const {
     };
     scan(QDir(userPath + "/new"));
     scan(QDir(userPath + "/cur"));
+    for (const QString& folder : listMailboxes(user)) {
+        scan(QDir(userPath + "/." + folder + "/new"));
+        scan(QDir(userPath + "/." + folder + "/cur"));
+    }
     return total;
 }
 

@@ -6,6 +6,7 @@
 #include <QByteArray>
 #include <QList>
 #include <QDateTime>
+#include <QStringList>
 
 struct MailEntry {
     QString fileName;
@@ -53,6 +54,11 @@ public:
     bool markFlagged(const QString& user, int uid, bool flagged);
 
     /**
+     * Replace a message's maildir flag letters (subset of "DFRST"); moves it to cur/.
+     */
+    bool setFlags(const QString& user, int uid, const QString& flags);
+
+    /**
      * Delete (expunge) a message.
      */
     bool deleteMessage(const QString& user, int uid);
@@ -61,6 +67,23 @@ public:
      * Create a sub-mailbox folder (e.g. Trash, Sent).
      */
     bool createMailbox(const QString& user, const QString& mailbox);
+
+    /**
+     * Folder names (Maildir++ ".Name" subdirectories) for a user, without the leading dot.
+     */
+    QStringList listMailboxes(const QString& user) const;
+
+    /**
+     * Delete an empty-or-not folder and its messages. INBOX cannot be deleted.
+     */
+    bool deleteMailbox(const QString& user, const QString& mailbox);
+
+    /**
+     * Rename a folder (and its sub-folders).
+     */
+    bool renameMailbox(const QString& user, const QString& from, const QString& to);
+
+    bool mailboxExists(const QString& user, const QString& mailbox) const;
 
     /**
      * User quota usage in bytes.

@@ -35,6 +35,7 @@ set(SOURCES
     src/services/SmtpConnection.cpp
     src/services/ImapServer.cpp
     src/services/ImapConnection.cpp
+    src/services/ImapMime.cpp
     src/services/Pop3Server.cpp
     src/services/Pop3Connection.cpp
 )
@@ -57,6 +58,7 @@ set(HEADERS
     src/services/SmtpConnection.h
     src/services/ImapServer.h
     src/services/ImapConnection.h
+    src/services/ImapMime.h
     src/services/Pop3Server.h
     src/services/Pop3Connection.h
 )

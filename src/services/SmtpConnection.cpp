@@ -169,7 +169,7 @@ void SmtpConnection::handleCommand(const QString& commandLine) {
             QString resp = "250-" + m_hostname + "\r\n"
                            "250-PIPELINING\r\n"
                            "250-8BITMIME\r\n";
-            if (m_auth && m_auth->isEnabled() && !m_authenticated)
+            if (m_auth && m_auth->isEnabled() && !m_authenticated && m_socket->isEncrypted())
                 resp += "250-AUTH LOGIN PLAIN\r\n";
             if (TlsContext::instance().isConfigured() && !m_socket->isEncrypted())
                 resp += "250-STARTTLS\r\n";
@@ -205,6 +205,8 @@ void SmtpConnection::handleCommand(const QString& commandLine) {
         }
 
     // --- AUTH LOGIN / PLAIN ---
+    } else if (cmd == "AUTH" && m_auth && m_auth->isEnabled() && !m_socket->isEncrypted()) {
+        sendResponse(538, "5.7.11 Encryption required for requested authentication mechanism");
     } else if (cmd == "AUTH" && m_auth && m_auth->isEnabled()) {
         QString method = args.section(' ', 0, 0).toUpper();
         if (method == "LOGIN") {
@@ -229,6 +231,7 @@ void SmtpConnection::handleCommand(const QString& commandLine) {
                     if (m_auth->authenticate(username, password, peer)) {
                         sendResponse(235, "2.7.0 Authentication successful");
                         m_authenticated = true;
+                        m_authUser = username;
                     } else {
                         sendResponse(535, "5.7.8 Authentication credentials invalid");
                     }
@@ -249,6 +252,7 @@ void SmtpConnection::handleCommand(const QString& commandLine) {
             if (m_auth->authenticate(parts[1], parts[2], peer)) {
                 sendResponse(235, "2.7.0 Authentication successful");
                 m_authenticated = true;
+                m_authUser = parts[1];
             } else {
                 sendResponse(535, "5.7.8 Authentication credentials invalid");
             }
@@ -282,6 +286,14 @@ void SmtpConnection::handleCommand(const QString& commandLine) {
                     m_sender = m_sender.mid(1, closePos - 1);
                 }
             }
+            if (m_authenticated && m_sender.compare(m_authUser.trimmed(), Qt::CaseInsensitive) != 0) {
+                sendResponse(553, "5.7.1 Sender address does not match authenticated user");
+                return;
+            }
+            if (!m_authenticated && isLocalDomain(m_sender)) {
+                sendResponse(530, "5.7.0 Authentication required to send as a local address");
+                return;
+            }
             sendResponse(250, "2.1.0 Ok");
             m_state = MAIL_FROM;
         } else {
@@ -295,6 +307,12 @@ void SmtpConnection::handleCommand(const QString& commandLine) {
             if (rcpt.startsWith('<') && rcpt.endsWith('>'))
                 rcpt = rcpt.mid(1, rcpt.size() - 2);
 
+            if (!isLocalDomain(rcpt) && !m_authenticated) {
+                qWarning() << "SMTP: relay denied to" << rcpt << "from" << m_socket->peerAddress().toString();
+                sendResponse(554, "5.7.1 Relay access denied");
+                return;
+            }
+
             // Check if recipient is local — if catch-all is off, reject unknown users
             if (isLocalDomain(rcpt) && !m_catchAllEnabled) {
                 if (!m_auth || !m_auth->userExists(rcpt)) {
@@ -304,7 +322,8 @@ void SmtpConnection::handleCommand(const QString& commandLine) {
             }
 
             // Quota check (configurable path)
-            qint64 used = m_storage ? m_storage->usageBytes(rcpt) : 0;
+            const QString mailbox = rcpt.section('@', 0, 0).toLower();
+            qint64 used = (m_storage && isLocalDomain(rcpt)) ? m_storage->usageBytes(mailbox) : 0;
             if (used >= m_quotaHardBytes) {
                 sendResponse(550, "5.2.2 Mailbox full");
             } else {
