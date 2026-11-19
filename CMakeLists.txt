@@ -25,16 +25,20 @@ set(SOURCES
     src/auth/UserRepository.cpp
     src/tls/TlsContext.cpp
     src/storage/MaildirStorage.cpp
+    src/storage/UserSettings.cpp
     src/queue/QueueManager.cpp
     src/queue/OutboundWorker.cpp
     src/filters/SpamFilter.cpp
     src/parser/MimeParser.cpp
     src/api/ApiServer.cpp
+    src/api/WebmailApi.cpp
+    src/api/WebmailFeatures.cpp
     src/systemd/ServiceNotifier.cpp
     src/services/SmtpServer.cpp
     src/services/SmtpConnection.cpp
     src/services/ImapServer.cpp
     src/services/ImapConnection.cpp
+    src/services/ImapMime.cpp
     src/services/Pop3Server.cpp
     src/services/Pop3Connection.cpp
 )
@@ -46,17 +50,21 @@ set(HEADERS
     src/auth/UserRepository.h
     src/tls/TlsContext.h
     src/storage/MaildirStorage.h
+    src/storage/UserSettings.h
     src/queue/QueueManager.h
     src/queue/OutboundWorker.h
     src/filters/SpamFilter.h
     src/parser/MimeParser.h
     src/api/ApiServer.h
+    src/api/WebmailApi.h
+    src/api/WebmailUtil.h
     src/systemd/ServiceNotifier.h
     src/utils/RateLimiter.h
     src/services/SmtpServer.h
     src/services/SmtpConnection.h
     src/services/ImapServer.h
     src/services/ImapConnection.h
+    src/services/ImapMime.h
     src/services/Pop3Server.h
     src/services/Pop3Connection.h
 )

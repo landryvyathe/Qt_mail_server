@@ -11,7 +11,7 @@ class ConfigManager;
 class QueueManager : public QObject {
     Q_OBJECT
 public:
-    explicit QueueManager(const ConfigManager& config, QObject* parent = nullptr);
+    explicit QueueManager(const ConfigManager& config, const QString& configFilePath, QObject* parent = nullptr);
     ~QueueManager();
 
     bool init();
@@ -22,6 +22,7 @@ public:
 
 private:
     const ConfigManager& m_config;
+    QString m_configFilePath;
     QString m_spoolDir;
 
     QThread*          m_workerThread = nullptr;

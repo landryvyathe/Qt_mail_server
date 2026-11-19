@@ -11,8 +11,8 @@
 #include <QDateTime>
 #include <QDebug>
 
-QueueManager::QueueManager(const ConfigManager& config, QObject* parent)
-    : QObject(parent), m_config(config) {
+QueueManager::QueueManager(const ConfigManager& config, const QString& configFilePath, QObject* parent)
+    : QObject(parent), m_config(config), m_configFilePath(configFilePath) {
 
     auto oc = m_config.outbound();
     m_spoolDir = oc.spoolDir.isEmpty() ? QStringLiteral("./spool") : oc.spoolDir;
@@ -83,7 +83,7 @@ bool QueueManager::spoolMessage(const QByteArray& mimeMessage,
 
 void QueueManager::start() {
     m_workerThread = new QThread(this);
-    m_worker = new OutboundWorker(m_config);
+    m_worker = new OutboundWorker(m_config, m_configFilePath);
     m_worker->moveToThread(m_workerThread);
 
     connect(m_workerThread, &QThread::started,  m_worker, &OutboundWorker::start);

@@ -1,0 +1,59 @@
+name: Android app
+
+on:
+  push:
+    paths: ['ios-app/**', 'webmail/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ios-app
+    env:
+      HAS_SIGNING: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ios-app/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Install and sync web files into the Android project
+        run: |
+          npm ci
+          npm run build:www
+          npx cap sync android
+
+      - name: Build signed release APK
+        if: env.HAS_SIGNING == 'true'
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d > "$ANDROID_KEYSTORE_PATH"
+          cd android && ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/BykivaMail-1.1.0.apk"
+          rm -f "$ANDROID_KEYSTORE_PATH"
+
+      - name: Build debug APK (no signing secrets yet)
+        if: env.HAS_SIGNING != 'true'
+        run: |
+          cd android && ./gradlew --no-daemon assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/BykivaMail-1.1.0-debug.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BykivaMail-android
+          path: BykivaMail-*.apk

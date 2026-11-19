@@ -17,8 +17,8 @@
 // ---------------------------------------------------------------------------
 // constructor
 // ---------------------------------------------------------------------------
-OutboundWorker::OutboundWorker(const ConfigManager& config, QObject* parent)
-    : QObject(parent), m_config(config), m_stopping(false), m_maxRetries(8) {
+OutboundWorker::OutboundWorker(const ConfigManager& config, const QString& configFilePath, QObject* parent)
+    : QObject(parent), m_config(config), m_configFilePath(configFilePath), m_stopping(false), m_maxRetries(8) {
 
     auto oc = m_config.outbound();
     m_spoolDir = oc.spoolDir.isEmpty() ? QStringLiteral("./spool") : oc.spoolDir;
@@ -407,20 +407,35 @@ OutboundWorker::SmtpDeliveryResult OutboundWorker::deliverViaRelay(OutboundEmail
     }
 
     // AUTH if credentials provided (some relays like Alibaba require auth but don't advertise it)
-    if (!m_relay.username.isEmpty() && !m_relay.password.isEmpty()) {
-        qInfo() << "OutboundWorker: authenticating to relay as" << m_relay.username;
+    // Alibaba DirectMail only lets an account send as itself: log in as the sender when it (or
+    // its domain) has an SMTP password configured, otherwise fall back to the shared relay account.
+    // A per-address entry takes priority since DirectMail registers senders individually.
+    QString authUser = m_relay.username;
+    QString authPass = m_relay.password;
+    const QString senderAddress = email.envelopeFrom.trimmed().toLower();
+    const QString senderDomain = senderAddress.section('@', 1);
+    const QHash<QString, QString> senderPasswords = liveSenderPasswords();
+    if (senderPasswords.contains(senderAddress)) {
+        authUser = senderAddress;
+        authPass = senderPasswords.value(senderAddress);
+    } else if (senderPasswords.contains(senderDomain)) {
+        authUser = senderAddress;
+        authPass = senderPasswords.value(senderDomain);
+    }
+    if (!authUser.isEmpty() && !authPass.isEmpty()) {
+        qInfo() << "OutboundWorker: authenticating to relay as" << authUser;
         {
             QString authMethod = m_relay.authMethod;
             if (authMethod == "PLAIN") {
-                if (!smtpAuthPlain(&socket, code, text)) {
+                if (!smtpAuthPlain(&socket, authUser, authPass, code, text)) {
                     result.errorText = QStringLiteral("AUTH PLAIN failed: ") + text;
-                    result.temporary = false;
+                    result.temporary = true; // a freshly set DirectMail password takes ~1 min to propagate
                     return result;
                 }
             } else if (authMethod == "LOGIN") {
-                if (!smtpAuthLogin(&socket, code, text)) {
+                if (!smtpAuthLogin(&socket, authUser, authPass, code, text)) {
                     result.errorText = QStringLiteral("AUTH LOGIN failed: ") + text;
-                    result.temporary = false;
+                    result.temporary = true; // a freshly set DirectMail password takes ~1 min to propagate
                     return result;
                 }
             } else {
@@ -491,17 +506,18 @@ OutboundWorker::SmtpDeliveryResult OutboundWorker::deliverViaRelay(OutboundEmail
 // ---------------------------------------------------------------------------
 // SMTP AUTH LOGIN
 // ---------------------------------------------------------------------------
-bool OutboundWorker::smtpAuthLogin(QSslSocket* s, int& code, QString& text) {
+bool OutboundWorker::smtpAuthLogin(QSslSocket* s, const QString& user, const QString& pass,
+                                   int& code, QString& text) {
     if (!smtpSendCommand(s, QByteArray("AUTH LOGIN\r\n"), 334, code, text)) {
         return false;
     }
 
-    QByteArray usernameB64 = m_relay.username.toLatin1().toBase64();
+    QByteArray usernameB64 = user.toLatin1().toBase64();
     if (!smtpSendCommand(s, usernameB64 + "\r\n", 334, code, text)) {
         return false;
     }
 
-    QByteArray passwordB64 = m_relay.password.toLatin1().toBase64();
+    QByteArray passwordB64 = pass.toLatin1().toBase64();
     if (!smtpSendCommand(s, passwordB64 + "\r\n", 235, code, text)) {
         return false;
     }
@@ -512,16 +528,42 @@ bool OutboundWorker::smtpAuthLogin(QSslSocket* s, int& code, QString& text) {
 // ---------------------------------------------------------------------------
 // SMTP AUTH PLAIN
 // ---------------------------------------------------------------------------
-bool OutboundWorker::smtpAuthPlain(QSslSocket* s, int& code, QString& text) {
+bool OutboundWorker::smtpAuthPlain(QSslSocket* s, const QString& user, const QString& pass,
+                                   int& code, QString& text) {
     // base64(\0 username \0 password)
     QByteArray auth;
     auth.append('\0');
-    auth.append(m_relay.username.toLatin1());
+    auth.append(user.toLatin1());
     auth.append('\0');
-    auth.append(m_relay.password.toLatin1());
+    auth.append(pass.toLatin1());
 
     QByteArray cmd = "AUTH PLAIN " + auth.toBase64() + "\r\n";
     return smtpSendCommand(s, cmd, 235, code, text);
+}
+
+// ---------------------------------------------------------------------------
+// Live sender_passwords (re-read from disk so a newly auto-provisioned
+// DirectMail sender can send without waiting for a service restart)
+// ---------------------------------------------------------------------------
+QHash<QString, QString> OutboundWorker::liveSenderPasswords() const {
+    if (m_configFilePath.isEmpty()) return m_relay.senderPasswords;
+
+    QFile file(m_configFilePath);
+    if (!file.open(QIODevice::ReadOnly)) return m_relay.senderPasswords;
+
+    QJsonParseError err;
+    QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &err);
+    file.close();
+    if (err.error != QJsonParseError::NoError) return m_relay.senderPasswords;
+
+    QJsonObject senderPw = doc.object().value("outbound").toObject()
+                               .value("relay").toObject()
+                               .value("sender_passwords").toObject();
+    QHash<QString, QString> result;
+    for (auto it = senderPw.constBegin(); it != senderPw.constEnd(); ++it) {
+        result.insert(it.key().toLower(), it.value().toString());
+    }
+    return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -583,6 +625,10 @@ void OutboundWorker::loadPendingFromDisk() {
         }
         if (already) continue;
 
+        const auto retry = m_retryState.constFind(QFileInfo(fp).fileName());
+        if (retry != m_retryState.constEnd() && retry->nextAttemptAt > QDateTime::currentSecsSinceEpoch())
+            continue;
+
         QFile file(fp);
         if (!file.open(QIODevice::ReadOnly)) continue;
 
@@ -602,6 +648,7 @@ void OutboundWorker::loadPendingFromDisk() {
 
         OutboundEmail email;
         email.filePath = fp;
+        if (retry != m_retryState.constEnd()) email.retryCount = retry->retryCount;
 
         if (hasJsonEnvelope && jsonEnd > 0) {
             QByteArray jsonBytes = data.left(jsonEnd);
@@ -665,6 +712,7 @@ void OutboundWorker::markDelivered(const OutboundEmail& email) {
     QDir().mkpath(deliveredDir);
     QString dest = deliveredDir + "/" + QFileInfo(email.filePath).fileName();
     QFile::rename(email.filePath, dest);
+    m_retryState.remove(QFileInfo(email.filePath).fileName());
     qInfo() << "OutboundWorker: delivered ->" << dest;
 }
 
@@ -679,6 +727,7 @@ void OutboundWorker::markDeferred(OutboundEmail& email, const QString& reason) {
     QString dest = deferredDir + "/" + QFileInfo(email.filePath).fileName();
     QFile::rename(email.filePath, dest);
     email.filePath = dest;
+    m_retryState.insert(QFileInfo(dest).fileName(), {email.retryCount, email.nextAttemptAt});
 
     qWarning() << "OutboundWorker: deferred" << email.filePath
                << "(" << reason << ") – next attempt in" << delay << "s";
@@ -689,5 +738,6 @@ void OutboundWorker::markFailed(const OutboundEmail& email) {
     QDir().mkpath(failedDir);
     QString dest = failedDir + "/" + QFileInfo(email.filePath).fileName();
     QFile::rename(email.filePath, dest);
+    m_retryState.remove(QFileInfo(email.filePath).fileName());
     qCritical() << "OutboundWorker: permanently failed ->" << dest;
 }

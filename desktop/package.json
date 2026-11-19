@@ -1,0 +1,53 @@
+{
+  "name": "bykiva-mail",
+  "productName": "Bykiva Mail",
+  "version": "1.1.0",
+  "description": "Desktop app for Bykiva Mail (mail.bykiva.com)",
+  "author": "Bykiva <admin@bykiva.com>",
+  "homepage": "https://mail.bykiva.com",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:linux": "electron-builder --linux AppImage deb",
+    "dist:win": "electron-builder --win nsis",
+    "dist": "electron-builder --linux AppImage deb --win nsis"
+  },
+  "build": {
+    "appId": "com.bykiva.mail",
+    "productName": "Bykiva Mail",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "sidebar.html",
+      "sidebar.js",
+      "offline.html",
+      "build/icon.png"
+    ],
+    "linux": {
+      "category": "Office;Email",
+      "icon": "build/icon.png",
+      "maintainer": "Bykiva <admin@bykiva.com>",
+      "synopsis": "Bykiva Mail desktop app"
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Bykiva Mail"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  }
+}

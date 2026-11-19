@@ -151,7 +151,7 @@ int main(int argc, char* argv[]) {
         QByteArray mime = buildTestMessage(from, to, subject);
 
         // Init queue manager (OutboundWorker will pick up the spooled message)
-        QueueManager queueMgr(config);
+        QueueManager queueMgr(config, configPath);
         queueMgr.init();
         queueMgr.start();
 
@@ -196,12 +196,13 @@ int main(int argc, char* argv[]) {
     }
 
     // --- Queue ---
-    QueueManager queueMgr(config);
+    QueueManager queueMgr(config, configPath);
     queueMgr.init();
     queueMgr.start();
 
     // --- API ---
-    ApiServer* apiServer = new ApiServer(config);
+    ApiServer* apiServer = new ApiServer(config, configPath);
+    apiServer->setWebmailServices({&storage, &authManager, &queueMgr});
     apiServer->start();
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [apiServer]() {
         apiServer->stop();

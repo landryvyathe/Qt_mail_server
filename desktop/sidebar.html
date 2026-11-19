@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Accounts</title>
+  <style>
+    :root { --bg: #0f6cbd; --bg-dark: #0b5394; --fg: #fff; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1b2430; --bg-dark: #121922; } }
+    html, body { margin: 0; height: 100%; background: var(--bg); font-family: system-ui, Arial, sans-serif; user-select: none; }
+    body { display: flex; flex-direction: column; align-items: center; padding: 10px 0; box-sizing: border-box; gap: 10px; overflow-y: auto; }
+    button { all: unset; cursor: pointer; position: relative; width: 44px; height: 44px; border-radius: 12px;
+             display: grid; place-items: center; color: var(--fg); font-weight: 600; font-size: 15px; transition: border-radius .15s; }
+    button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+    .acct { background: rgba(255,255,255,.18); }
+    .acct:hover { border-radius: 16px; background: rgba(255,255,255,.28); }
+    .acct.active { background: #fff; color: var(--bg-dark); border-radius: 16px; }
+    .acct.active::before { content: ''; position: absolute; left: -12px; width: 4px; height: 28px; border-radius: 0 3px 3px 0; background: #fff; }
+    .badge { position: absolute; top: -4px; right: -6px; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
+             border-radius: 9px; background: #d13438; color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
+    .add { border: 2px dashed rgba(255,255,255,.55); width: 40px; height: 40px; font-size: 24px; font-weight: 400; }
+    .add:hover { border-color: #fff; }
+  </style>
+</head>
+<body>
+  <div id="list" style="display:contents"></div>
+  <button class="add" id="add" title="Add account" aria-label="Add account">+</button>
+  <script src="sidebar.js"></script>
+</body>
+</html>

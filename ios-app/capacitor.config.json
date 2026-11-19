@@ -1,0 +1,13 @@
+{
+  "appId": "com.bykiva.mail",
+  "appName": "Bykiva Mail",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "plugins": {
+    "SplashScreen": { "launchShowDuration": 600, "backgroundColor": "#0f6cbd", "showSpinner": false },
+    "StatusBar": { "style": "DEFAULT", "overlaysWebView": false }
+  }
+}

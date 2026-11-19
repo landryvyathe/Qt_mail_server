@@ -19,7 +19,7 @@ struct OutboundEmail {
 class OutboundWorker : public QObject {
     Q_OBJECT
 public:
-    explicit OutboundWorker(const ConfigManager& config, QObject *parent = nullptr);
+    explicit OutboundWorker(const ConfigManager& config, const QString& configFilePath, QObject *parent = nullptr);
     ~OutboundWorker();
     void start();
     void stop();
@@ -47,8 +47,8 @@ private:
     bool smtpSendCommand(QSslSocket* s, const QByteArray& cmd, int expectedCode, int& code, QString& text);
 
     // -- AUTH helpers --
-    bool smtpAuthLogin(QSslSocket* s, int& code, QString& text);
-    bool smtpAuthPlain(QSslSocket* s, int& code, QString& text);
+    bool smtpAuthLogin(QSslSocket* s, const QString& user, const QString& pass, int& code, QString& text);
+    bool smtpAuthPlain(QSslSocket* s, const QString& user, const QString& pass, int& code, QString& text);
 
     // -- Queue management --
     void loadPendingFromDisk();
@@ -59,13 +59,23 @@ private:
     // -- DKIM signing --
     QByteArray signDkim(const QByteArray& rawEmail);
 
+    // Re-reads sender_passwords from disk so an address registered with DirectMail after
+    // startup (e.g. by auto-provisioning on account creation) can send without a restart.
+    QHash<QString, QString> liveSenderPasswords() const;
+
     const ConfigManager& m_config;
+    QString m_configFilePath;
     QString m_spoolDir;
     QString m_hostname;
     ConfigManager::RelayConfig m_relay;
 
     QTimer*              m_timer;
     QQueue<OutboundEmail> m_queue;
+
+    // Deferred messages leave m_queue and are re-read from spool/deferred on every poll; this
+    // keeps their attempt count and backoff across those reloads (keyed by spool file name).
+    struct RetryState { int retryCount = 0; qint64 nextAttemptAt = 0; };
+    QHash<QString, RetryState> m_retryState;
     bool m_stopping;
     int  m_maxRetries;
 };

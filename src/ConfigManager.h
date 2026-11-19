@@ -1,6 +1,7 @@
 #ifndef CONFIGMANAGER_H
 #define CONFIGMANAGER_H
 
+#include <QHash>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -35,6 +36,8 @@ public:
         QString authMethod; // "LOGIN" or "PLAIN"
         QString username;
         QString password;
+        // Per-domain SMTP passwords: senders in these domains authenticate as themselves.
+        QHash<QString, QString> senderPasswords;
         bool useTls = false;      // implicit TLS on connect (SMTPS, e.g. 465)
         bool useStartTls = false; // opportunistic STARTTLS after EHLO
     };

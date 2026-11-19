@@ -71,6 +71,9 @@ ConfigManager::OutboundConfig ConfigManager::outbound() const {
     cfg.relay.password    = relayObj.value("password").toString();
     cfg.relay.useTls      = relayObj.value("use_tls").toBool(false);
     cfg.relay.useStartTls = relayObj.value("use_starttls").toBool(false);
+    const QJsonObject senderPw = relayObj.value("sender_passwords").toObject();
+    for (auto it = senderPw.begin(); it != senderPw.end(); ++it)
+        cfg.relay.senderPasswords.insert(it.key().toLower(), it.value().toString());
 
     return cfg;
 }
