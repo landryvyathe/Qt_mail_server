@@ -4,9 +4,10 @@
   "description": "Bykiva Mail for iPhone",
   "scripts": {
     "build:www": "node scripts/build-www.mjs",
-    "sync": "npm run build:www && cap sync ios"
+    "sync": "npm run build:www && cap sync"
   },
   "dependencies": {
+    "@capacitor/android": "^7.6.10",
     "@capacitor/core": "^7.6.10",
     "@capacitor/ios": "^7.6.10",
     "@capacitor/splash-screen": "^7.0.5",
