@@ -26,6 +26,11 @@
 
 * { box-sizing: border-box; }
 html, body, #app { margin: 0; height: 100%; }
+/* Keeps content clear of the iPhone notch and home bar; zero everywhere else. */
+#app, .compose-backdrop {
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
 body {
   background: var(--bg); color: var(--text);
   font: 14px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;

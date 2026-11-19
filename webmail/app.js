@@ -81,8 +81,11 @@ const store = {
 };
 
 // ---------- API ----------
+// Empty on the website (same origin); the iPhone app bundles these files and sets the server URL.
+const API_BASE = globalThis.BYKIVA_API_BASE || '';
+
 async function api(method, path, body, raw = false) {
-  const res = await fetch(path, {
+  const res = await fetch(API_BASE + path, {
     method,
     headers: { Authorization: `Bearer ${state.token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
@@ -193,7 +196,7 @@ function renderLogin(message = '') {
       submit.disabled = true;
       err.textContent = '';
       try {
-        const res = await fetch('/api/mail/login', {
+        const res = await fetch(API_BASE + '/api/mail/login', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: email.value.trim(), password: pass.value }),
         });
