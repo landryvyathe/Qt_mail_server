@@ -46,6 +46,8 @@ private:
     bool authorize(const httplib::Request& req, httplib::Response& res, Session& out);
     QString createSession(const QString& email);
     void dropSession(const httplib::Request& req);
+    void loadSessions();
+    void saveSessionsLocked() const;
 
     void handleFolders(const Session& s, httplib::Response& res);
     void handleFolderAction(const Session& s, const QJsonObject& body, httplib::Response& res);
@@ -78,8 +80,9 @@ private:
     WebmailServices      m_services;
     QStringList          m_localDomains;
     QString              m_hostname;
-    QHash<QString, Session> m_sessions;
+    QHash<QString, Session> m_sessions;   // keyed by SHA-256 of the bearer token
     QMutex               m_sessionMutex;
+    QString              m_sessionFile;
     std::thread          m_snoozeThread;
     std::atomic<bool>    m_stopping{false};
     std::mutex           m_wakeMutex;

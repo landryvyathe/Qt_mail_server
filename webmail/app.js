@@ -750,7 +750,9 @@ function sanitizeHtml(html, cidMap, allowRemote) {
       const name = attr.name.toLowerCase();
       const value = attr.value.trim();
       if (name.startsWith('on') || name === 'srcdoc' || name === 'formaction') { el.removeAttribute(attr.name); continue; }
-      if (['href', 'src', 'xlink:href', 'action', 'background', 'poster'].includes(name) && /^\s*(javascript|vbscript|data:text\/html)/i.test(value)) {
+      // Browsers strip ASCII tab/CR/LF from anywhere in a URL before parsing its scheme (e.g.
+      // "jav\tascript:"), so the scheme check must do the same or a stripped char can hide it.
+      if (['href', 'src', 'xlink:href', 'action', 'background', 'poster'].includes(name) && /^\s*(javascript|vbscript|data:text\/html)/i.test(value.replace(/[\t\r\n]/g, ''))) {
         el.removeAttribute(attr.name);
         continue;
       }

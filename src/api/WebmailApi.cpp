@@ -10,8 +10,13 @@
 #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include <httplib.h>
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
 #include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -26,7 +31,8 @@
 namespace {
 using namespace WebmailUtil;
 
-constexpr qint64 kSessionTtlSecs = 8 * 3600;
+constexpr qint64 kSessionTtlSecs = 30LL * 24 * 3600;
+constexpr qint64 kSessionPersistSlackSecs = 24 * 3600;
 constexpr int    kMaxPageSize = 100;
 constexpr int    kMaxRecipients = 100;
 constexpr qint64 kMaxMessageBytes = 25LL * 1024 * 1024;
@@ -88,8 +94,10 @@ QByteArray randomHex(int bytes) {
 }
 
 bool isValidEmail(const QString& email) {
-    static const QRegularExpression re(R"(^[^@\s<>",;:()\[\]\\]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$)");
-    return email.size() <= 254 && re.match(email).hasMatch();
+    // The local part becomes a maildir path component (see userMaildirPath), so '/' and '..'
+    // must be rejected here even though they are otherwise legal local-part characters.
+    static const QRegularExpression re(R"(^[^@\s<>",;:()\[\]\\/]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$)");
+    return email.size() <= 254 && !email.contains("..") && re.match(email).hasMatch();
 }
 
 struct Attachment {
@@ -199,6 +207,8 @@ WebmailApi::WebmailApi(const ConfigManager& config, const WebmailServices& servi
     : m_config(config), m_services(services),
       m_localDomains(config.localDomains()), m_hostname(config.hostname()) {
     for (QString& d : m_localDomains) d = d.toLower();
+    m_sessionFile = QFileInfo(config.maildirBasePath()).dir().filePath("webmail-sessions.json");
+    loadSessions();
     m_snoozeThread = std::thread([this] { snoozeLoop(); });
 }
 
@@ -210,13 +220,48 @@ WebmailApi::~WebmailApi() {
 
 // ---- sessions ---------------------------------------------------------------
 
+static QString tokenKey(const QString& token) {
+    return QString::fromLatin1(QCryptographicHash::hash(token.toLatin1(), QCryptographicHash::Sha256).toHex());
+}
+
+// Sessions survive server restarts: only token hashes are written, owner-readable only.
+void WebmailApi::loadSessions() {
+    QFile f(m_sessionFile);
+    if (!f.open(QIODevice::ReadOnly)) return;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+    QMutexLocker lock(&m_sessionMutex);
+    for (auto it = root.begin(); it != root.end(); ++it) {
+        const QJsonObject o = it.value().toObject();
+        const qint64 expires = o.value("expires").toInteger();
+        if (expires > now)
+            m_sessions.insert(it.key(), {o.value("user").toString(), o.value("email").toString(), expires});
+    }
+    qInfo() << "Webmail: restored" << m_sessions.size() << "sessions";
+}
+
+void WebmailApi::saveSessionsLocked() const {
+    QJsonObject root;
+    for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it)
+        root.insert(it.key(), QJsonObject{{"user", it->user}, {"email", it->email}, {"expires", it->expires}});
+    QSaveFile f(m_sessionFile);
+    if (!f.open(QIODevice::WriteOnly)) {
+        qWarning() << "Webmail: cannot write session file" << m_sessionFile;
+        return;
+    }
+    f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    f.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    if (!f.commit()) qWarning() << "Webmail: failed to save sessions" << f.errorString();
+}
+
 QString WebmailApi::createSession(const QString& email) {
     const QString token = QString::fromLatin1(randomHex(32));
     QMutexLocker lock(&m_sessionMutex);
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     for (auto it = m_sessions.begin(); it != m_sessions.end();)
         it = it->expires < now ? m_sessions.erase(it) : std::next(it);
-    m_sessions.insert(token, {email.section('@', 0, 0).toLower(), email.toLower(), now + kSessionTtlSecs});
+    m_sessions.insert(tokenKey(token), {email.section('@', 0, 0).toLower(), email.toLower(), now + kSessionTtlSecs});
+    saveSessionsLocked();
     return token;
 }
 
@@ -228,22 +273,24 @@ static QString bearerToken(const httplib::Request& req) {
 bool WebmailApi::authorize(const httplib::Request& req, httplib::Response& res, Session& out) {
     const QString token = bearerToken(req);
     QMutexLocker lock(&m_sessionMutex);
-    auto it = m_sessions.find(token);
+    auto it = token.isEmpty() ? m_sessions.end() : m_sessions.find(tokenKey(token));
     const qint64 now = QDateTime::currentSecsSinceEpoch();
-    if (token.isEmpty() || it == m_sessions.end() || it->expires < now) {
-        if (it != m_sessions.end()) m_sessions.erase(it);
+    if (it == m_sessions.end() || it->expires < now) {
+        if (it != m_sessions.end()) { m_sessions.erase(it); saveSessionsLocked(); }
         lock.unlock();
         sendError(res, 401, "Not signed in");
         return false;
     }
+    const bool persist = now + kSessionTtlSecs - it->expires > kSessionPersistSlackSecs;
     it->expires = now + kSessionTtlSecs;
     out = *it;
+    if (persist) saveSessionsLocked();
     return true;
 }
 
 void WebmailApi::dropSession(const httplib::Request& req) {
     QMutexLocker lock(&m_sessionMutex);
-    m_sessions.remove(bearerToken(req));
+    if (m_sessions.remove(tokenKey(bearerToken(req)))) saveSessionsLocked();
 }
 
 // ---- helpers ------------------------------------------------------------------

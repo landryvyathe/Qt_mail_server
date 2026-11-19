@@ -41,7 +41,13 @@ static QString maildirFlags(const QString& fileName) {
 }
 
 QString MaildirStorage::userMaildirPath(const QString& user) const {
-    return m_basePath + "/" + user;
+    // Defense in depth: isValidEmail() at the API boundary already rejects '/' and '..' in the
+    // local part, but this is the actual path-traversal choke point, so it sanitizes again
+    // rather than trusting every caller to have gone through that validation first.
+    QString sanitized = user;
+    sanitized.replace('/', '_').replace('\\', '_');
+    while (sanitized.contains("..")) sanitized.replace("..", "_");
+    return m_basePath + "/" + sanitized;
 }
 
 int MaildirStorage::nextUid(const QString& userPath) {

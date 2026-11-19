@@ -1067,8 +1067,11 @@ bool ApiServer::start() {
         });
 
         // --- Listen (blocking in this worker thread) ---
-        qInfo() << "ApiServer: listening on 0.0.0.0:" << m_port;
-        m_server->listen("0.0.0.0", m_port);
+        // Loopback only: nginx terminates TLS for the public webmail and proxies to this port
+        // from 127.0.0.1 (see mail.bykiva.com's nginx config) — it never needs to be reachable
+        // directly, and binding 0.0.0.0 exposed the admin login over plain HTTP to the internet.
+        qInfo() << "ApiServer: listening on 127.0.0.1:" << m_port;
+        m_server->listen("127.0.0.1", m_port);
 
         qInfo() << "ApiServer: stopped";
     };
