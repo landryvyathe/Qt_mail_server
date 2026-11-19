@@ -75,6 +75,9 @@ function createAccountView(account) {
   wc.on('did-fail-load', (_e, code, _desc, _url, isMainFrame) => {
     if (isMainFrame && code !== -3) wc.loadFile(path.join(__dirname, 'offline.html'));
   });
+  // Refreshes the sidebar as soon as this account's page loads, instead of waiting for the
+  // next 15s poll tick — otherwise a newly added or just-signed-in account sits on "?" too long.
+  wc.on('did-finish-load', () => { pollStatus(); });
   win.contentView.addChildView(view);
   views.set(account.id, view);
   wc.loadURL(APP_URL);
@@ -170,12 +173,16 @@ function createWindow() {
   const remembered = readJson('active.json', {}).id;
   selectAccount(accounts.some(a => a.id === remembered) ? remembered : accounts[0].id);
 
-  win.on('resize', layout);
+  // 'resize' alone misses some window managers' maximize/tile/fullscreen transitions
+  // (e.g. GNOME edge-snap), which left the panes at their old size inside a bigger window.
+  for (const evt of ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen'])
+    win.on(evt, layout);
   win.on('close', () => {
     if (!win.isMinimized() && !win.isFullScreen()) writeJson('window.json', { ...win.getNormalBounds(), maximized: win.isMaximized() });
   });
   win.on('closed', () => { win = null; sidebar = null; views.clear(); });
   layout();
+  pollStatus();
   setInterval(pollStatus, STATUS_POLL_MS);
 }
 
